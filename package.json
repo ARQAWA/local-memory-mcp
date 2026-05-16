@@ -10,7 +10,7 @@
     "local-memory-postgres": "scripts/local-postgres.sh"
   },
   "scripts": {
-    "build": "tsc && rm -rf dist/db/migrations && cp -r src/db/migrations dist/db/migrations && cp -r public dist/public",
+    "build": "tsc && rm -rf dist/db/migrations dist/public && cp -r src/db/migrations dist/db/migrations && cp -r public dist/public",
     "dev:mcp": "tsx src/index.ts --stdio",
     "dev:web": "tsx src/index.ts --web",
     "start": "node dist/index.js --stdio",
