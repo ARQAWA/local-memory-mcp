@@ -9,6 +9,7 @@ Goal:
 - Clone the repository.
 - Install dependencies.
 - Install and start local PostgreSQL with pgvector.
+- Install Local Memory MCP as a user-level system utility.
 - Configure global environment variables.
 - Configure Codex MCP globally.
 - Verify MCP, Postgres, Web UI, and Admin UI.
@@ -19,6 +20,10 @@ https://github.com/ARQAWA/local-memory-mcp
 Rules:
 - Do not create `.env`, `.env.local`, or `.env.example`.
 - Use global system environment variables only.
+- Install the app under `$HOME/.local/share/local-memory-mcp/app`.
+- Do not clone into an application/project repository.
+- Do not clone into `PycharmProjects`.
+- Do not clone into the current working project.
 - Do not configure any cloud sync.
 - Do not configure Qdrant.
 - Do not expose the web server outside localhost.
@@ -47,9 +52,19 @@ Install steps:
    - git must exist.
 
 2. Clone the repo.
-   - Clone `https://github.com/ARQAWA/local-memory-mcp` into a stable user project folder.
-   - Example:
-     `~/PycharmProjects/local-memory-mcp`
+   - Install it as a user-level utility, not as a project checkout.
+   - Use this path:
+     `$HOME/.local/share/local-memory-mcp/app`
+   - Run:
+     `mkdir -p "$HOME/.local/share/local-memory-mcp"`
+     `git clone https://github.com/ARQAWA/local-memory-mcp "$HOME/.local/share/local-memory-mcp/app"`
+   - If that directory already exists, do not overwrite it silently.
+   - If it is this repo, run:
+     `git -C "$HOME/.local/share/local-memory-mcp/app" pull --ff-only`
+   - If it is not this repo, stop and ask the user.
+   - Then set:
+     `APP_DIR="$HOME/.local/share/local-memory-mcp/app"`
+   - Run all repo commands below from `$APP_DIR`.
 
 3. Install PostgreSQL and pgvector.
    - Prefer Homebrew.
@@ -86,7 +101,7 @@ Install steps:
    - If it is missing, stop and ask the user for the key.
 
 7. Start local Postgres.
-   - From the repo root, run:
+   - From `$APP_DIR`, run:
      `./scripts/local-postgres.sh start`
    - Then run:
      `./scripts/local-postgres.sh status`
@@ -99,10 +114,9 @@ Install steps:
 9. Install global command wrappers.
    - Run:
      `mkdir -p "$HOME/.local/bin"`
-     `ln -sf "$REPO_ROOT/bin/local-memory-mcp.sh" "$HOME/.local/bin/local-memory-mcp"`
-     `ln -sf "$REPO_ROOT/bin/local-memory-web.sh" "$HOME/.local/bin/local-memory-web"`
-     `ln -sf "$REPO_ROOT/scripts/local-postgres.sh" "$HOME/.local/bin/local-memory-postgres"`
-   - Replace `$REPO_ROOT` with the absolute repo path.
+     `ln -sf "$APP_DIR/bin/local-memory-mcp.sh" "$HOME/.local/bin/local-memory-mcp"`
+     `ln -sf "$APP_DIR/bin/local-memory-web.sh" "$HOME/.local/bin/local-memory-web"`
+     `ln -sf "$APP_DIR/scripts/local-postgres.sh" "$HOME/.local/bin/local-memory-postgres"`
 
 10. Configure Codex MCP.
     - Edit `~/.codex/config.toml`.
@@ -145,7 +159,7 @@ Install steps:
 
 15. Final report.
     Report:
-    - repo path;
+    - app install path;
     - Postgres status;
     - MCP config path;
     - Web/Admin URLs;
