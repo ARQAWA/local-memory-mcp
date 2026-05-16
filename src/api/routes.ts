@@ -30,6 +30,7 @@ const SearchMemoriesQuery = z
     tags: z.string().optional(),
     team_slug: z.string().min(1).max(100).optional(),
     limit: z.coerce.number().int().min(1).max(100).default(20),
+    offset: z.coerce.number().int().min(0).default(0),
   })
   .strict();
 
@@ -98,6 +99,7 @@ export function registerApiRoutes(app: Express, service: MemoryService): void {
         res.status(403).json({ error: "Admin access required for all_orgs" });
         return;
       }
+      const fetchLimit = Math.min(query.limit + query.offset, 500);
       const results = await service.searchMemories({
         query: query.q,
         org_id: query.all_orgs === "true" ? undefined : ctx.org_id,
@@ -105,9 +107,9 @@ export function registerApiRoutes(app: Express, service: MemoryService): void {
         memory_type: query.memory_type,
         tags: parseTags(query.tags),
         team_slug: query.team_slug,
-        limit: query.limit,
+        limit: fetchLimit,
       });
-      res.json(results);
+      res.json(results.slice(query.offset, query.offset + query.limit));
     } catch (err: unknown) {
       handleApiError(err, "GET /api/memories/search", res);
     }

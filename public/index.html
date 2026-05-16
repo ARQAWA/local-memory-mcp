@@ -1168,15 +1168,7 @@ a:hover{text-decoration:underline}
 
   // --- Boot ---
   renderIdentityBar();
-  if (!identity) {
-    showIdentityForm();
-    // Show friendly placeholders instead of loading (which would fail with ERR)
-    $('#stat-total').textContent = '—';
-    $('#stat-tags').textContent = '—';
-    $('#stat-stale').textContent = '—';
-  } else {
-    loadDashboard();
-  }
+  loadDashboard();
 })();
 </script>
 </body>
