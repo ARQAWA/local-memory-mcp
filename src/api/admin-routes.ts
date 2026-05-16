@@ -1,80 +1,21 @@
-import type { Express, Request, Response, NextFunction, RequestHandler } from "express";
+import type { Express, RequestHandler } from "express";
 import { z } from "zod";
 import type { MemoryService } from "../services/memory.service.js";
 import { MemoryTypeSchema, MemoryScopeSchema } from "../types/memory.js";
-import { loadConfig } from "../config.js";
 import { logger } from "../services/logger.js";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { timingSafeEqual } from "node:crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-function safeCompare(a: string, b: string): boolean {
-  const bufA = Buffer.from(a);
-  const bufB = Buffer.from(b);
-  // Pad to equal length so timingSafeEqual always runs on same-length buffers
-  const maxLen = Math.max(bufA.length, bufB.length);
-  const padA = Buffer.alloc(maxLen);
-  const padB = Buffer.alloc(maxLen);
-  bufA.copy(padA);
-  bufB.copy(padB);
-  // Evaluate both checks unconditionally — use bitwise AND to avoid
-  // short-circuit evaluation that would leak timing information.
-  const contentsMatch = timingSafeEqual(padA, padB) ? 1 : 0;
-  const lengthsMatch = bufA.length === bufB.length ? 1 : 0;
-  return (contentsMatch & lengthsMatch) === 1;
-}
-
-function basicAuth(req: Request, res: Response, next: NextFunction): void {
-  const config = loadConfig();
-  if (!config.adminPassword) {
-    res.status(403).json({
-      error: "Admin dashboard not configured. Set ADMIN_PASSWORD env var.",
-    });
-    return;
-  }
-
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Basic ")) {
-    res.set("WWW-Authenticate", 'Basic realm="Local Memory Admin"');
-    res.status(401).send("Authentication required");
-    return;
-  }
-
-  const decoded = Buffer.from(authHeader.slice(6), "base64").toString("utf-8");
-  const colonIdx = decoded.indexOf(":");
-  if (colonIdx === -1) {
-    res.set("WWW-Authenticate", 'Basic realm="Local Memory Admin"');
-    res.status(401).send("Invalid credentials");
-    return;
-  }
-
-  const user = decoded.slice(0, colonIdx);
-  const pass = decoded.slice(colonIdx + 1);
-
-  // Evaluate both comparisons unconditionally — do NOT short-circuit with ||
-  // because that would leak timing information about which field failed.
-  const userOk = safeCompare(user, config.adminUser);
-  const passOk = safeCompare(pass, config.adminPassword);
-  if (!userOk || !passOk) {
-    res.set("WWW-Authenticate", 'Basic realm="Local Memory Admin"');
-    res.status(401).send("Invalid credentials");
-    return;
-  }
-
-  next();
-}
-
 export function registerAdminRoutes(app: Express, _service: MemoryService, rateLimiter?: RequestHandler): void {
-  // Serve admin UI without auth (login is handled client-side)
+  // Local-only admin UI. Access is protected by localhost binding in src/index.ts.
   app.get("/admin", (_req, res) => {
     res.sendFile(join(__dirname, "..", "..", "public", "admin.html"));
   });
 
-  // All /admin/api routes: rate limit first, then Basic Auth
+  // All /admin/api routes are local-only; optional rate limiting may be applied.
   if (rateLimiter) app.use("/admin/api", rateLimiter);
-  app.use("/admin/api", basicAuth);
 
   // Admin API: analytics (cross-org)
   app.get("/admin/api/analytics", async (_req, res) => {

@@ -4,7 +4,7 @@ export const DEFAULT_DATABASE_URL = "postgres://local_memory:local_memory@127.0.
 
 export const configSchema = z
   .object({
-    port: z.coerce.number().int().min(1).max(65535).default(3765),
+    port: z.coerce.number().int().min(1).max(65535).default(13765),
     host: z.string().default("127.0.0.1"),
     nodeEnv: z.enum(["development", "production", "test"]).default("development"),
 
@@ -19,8 +19,6 @@ export const configSchema = z
     openRouterBaseUrl: z.url().default("https://openrouter.ai/api/v1"),
     asyncEmbedding: z.coerce.boolean().default(false),
 
-    adminUser: z.string().min(1).default("admin"),
-    adminPassword: z.string().min(1).default("admin"),
     rateLimitPerMin: z.coerce.number().int().min(1).max(100_000).default(500),
   })
   .strict();
@@ -33,19 +31,17 @@ export function loadConfig(): Config {
   if (cached) return cached;
   const env = process.env;
   cached = configSchema.parse({
-    port: env["PORT"],
-    host: env["HOST"],
+    port: env["LOCAL_MEMORY_PORT"] ?? env["PORT"],
+    host: env["LOCAL_MEMORY_HOST"] ?? env["HOST"],
     nodeEnv: env["NODE_ENV"],
     databaseUrl: env["LOCAL_MEMORY_DATABASE_URL"] ?? env["DATABASE_URL"],
     mcpTransport: env["MCP_TRANSPORT"],
     embeddingProvider: env["EMBEDDING_PROVIDER"],
     embeddingModel: env["EMBEDDING_MODEL"],
     embeddingDimension: env["EMBEDDING_DIMENSION"],
-    openRouterApiKey: env["OPENROUTER_API_KEY"] ?? env["GNOSIS_MCP_EMBED_API_KEY"],
+    openRouterApiKey: env["OPENROUTER_API_KEY"],
     openRouterBaseUrl: env["OPENROUTER_BASE_URL"],
     asyncEmbedding: env["ASYNC_EMBEDDING"],
-    adminUser: env["ADMIN_USER"],
-    adminPassword: env["ADMIN_PASSWORD"],
     rateLimitPerMin: env["RATE_LIMIT_PER_MIN"],
   });
   return cached;

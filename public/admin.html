@@ -73,37 +73,9 @@ tr:hover{background:rgba(255,255,255,0.03)}
 
 .loading{text-align:center;padding:40px;color:var(--text-dim)}
 
-.login-overlay{position:fixed;inset:0;background:var(--bg);z-index:200;display:flex;align-items:center;justify-content:center}
-.login-overlay.hidden{display:none}
-.login-box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:32px;width:360px;max-width:90vw;box-shadow:0 8px 32px rgba(0,0,0,0.5)}
-.login-box h2{font-size:18px;margin-bottom:4px;color:var(--text);display:flex;align-items:center;gap:8px}
-.login-box .subtitle{font-size:13px;color:var(--text-dim);margin-bottom:20px}
-.login-box label{display:block;font-size:12px;color:var(--text-dim);margin-bottom:4px;margin-top:14px;text-transform:uppercase;letter-spacing:0.5px}
-.login-box input{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-size:14px;outline:none}
-.login-box input:focus{border-color:var(--fact)}
-.login-box .login-btn{width:100%;margin-top:20px;padding:10px;background:var(--highlight);color:#fff;border:none;border-radius:var(--radius);font-size:14px;font-weight:600;cursor:pointer;transition:opacity .15s}
-.login-box .login-btn:hover{opacity:0.9}
-.login-box .login-btn:disabled{opacity:0.5;cursor:default}
-.login-error{color:var(--highlight);font-size:13px;margin-top:12px;display:none}
-.logout-btn{background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:var(--radius);padding:4px 12px;font-size:12px;cursor:pointer;margin-left:auto;transition:all .15s}
-.logout-btn:hover{border-color:var(--highlight);color:var(--highlight)}
 </style>
 </head>
 <body>
-
-<!-- Login overlay -->
-<div class="login-overlay" id="login-overlay">
-  <div class="login-box">
-    <h2>local memory <span class="badge">Admin</span></h2>
-    <div class="subtitle">Sign in to access the admin dashboard</div>
-    <label for="login-user">Username</label>
-    <input id="login-user" type="text" placeholder="Username" autocomplete="username">
-    <label for="login-pass">Password</label>
-    <input id="login-pass" type="password" placeholder="Password" autocomplete="current-password">
-    <div class="login-error" id="login-error"></div>
-    <button class="login-btn" id="login-btn">Sign In</button>
-  </div>
-</div>
 
 <div class="header">
   <div class="logo">local memory <span class="badge">Admin</span></div>
@@ -118,7 +90,6 @@ tr:hover{background:rgba(255,255,255,0.03)}
       <option value="90">90 days</option>
       <option value="365">1 year</option>
     </select>
-    <button class="logout-btn" id="logout-btn">Logout</button>
   </div>
 </div>
 
@@ -180,90 +151,11 @@ let currentPage = 0;
 const PAGE_SIZE = 50;
 let currentSearch = '';
 
-// --- Auth ---
-const AUTH_KEY = 'local-memory-admin-auth';
-
-function getAuthHeader() {
-  const cred = sessionStorage.getItem(AUTH_KEY);
-  return cred ? { 'Authorization': 'Basic ' + cred } : {};
-}
-
 async function adminFetch(url) {
-  const r = await fetch(url, { headers: getAuthHeader() });
-  if (r.status === 401) {
-    sessionStorage.removeItem(AUTH_KEY);
-    showLogin('Session expired. Please sign in again.');
-    throw new Error('Unauthorized');
-  }
+  const r = await fetch(url);
   if (!r.ok) throw new Error(r.statusText);
   return r.json();
 }
-
-function showLogin(errorMsg) {
-  document.getElementById('login-overlay').classList.remove('hidden');
-  const errEl = document.getElementById('login-error');
-  if (errorMsg) { errEl.textContent = errorMsg; errEl.style.display = 'block'; }
-  else { errEl.style.display = 'none'; }
-  document.getElementById('login-user').focus();
-}
-
-function hideLogin() {
-  document.getElementById('login-overlay').classList.add('hidden');
-  document.getElementById('login-error').style.display = 'none';
-}
-
-async function attemptLogin() {
-  const user = document.getElementById('login-user').value.trim();
-  const pass = document.getElementById('login-pass').value;
-  const btn = document.getElementById('login-btn');
-  const errEl = document.getElementById('login-error');
-
-  if (!user || !pass) { errEl.textContent = 'Username and password are required.'; errEl.style.display = 'block'; return; }
-
-  btn.disabled = true;
-  btn.textContent = 'Signing in...';
-  errEl.style.display = 'none';
-
-  const cred = btoa(user + ':' + pass);
-  try {
-    const r = await fetch('/admin/api/analytics?days=1', { headers: { 'Authorization': 'Basic ' + cred } });
-    if (r.status === 401) {
-      errEl.textContent = 'Invalid username or password.';
-      errEl.style.display = 'block';
-      return;
-    }
-    if (r.status === 403) {
-      errEl.textContent = 'Admin dashboard not configured on this server.';
-      errEl.style.display = 'block';
-      return;
-    }
-    if (!r.ok) {
-      errEl.textContent = 'Server error: ' + r.statusText;
-      errEl.style.display = 'block';
-      return;
-    }
-    sessionStorage.setItem(AUTH_KEY, cred);
-    hideLogin();
-    loadDashboard();
-  } catch (e) {
-    errEl.textContent = 'Connection failed: ' + e.message;
-    errEl.style.display = 'block';
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Sign In';
-  }
-}
-
-document.getElementById('login-btn').addEventListener('click', attemptLogin);
-document.getElementById('login-pass').addEventListener('keydown', e => { if (e.key === 'Enter') attemptLogin(); });
-document.getElementById('login-user').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('login-pass').focus(); });
-
-document.getElementById('logout-btn').addEventListener('click', () => {
-  sessionStorage.removeItem(AUTH_KEY);
-  showLogin();
-  document.getElementById('login-user').value = '';
-  document.getElementById('login-pass').value = '';
-});
 
 // --- Tabs ---
 document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
@@ -326,7 +218,6 @@ async function loadDashboard() {
         </div>`).join('');
     }
   } catch (e) {
-    if (e.message === 'Unauthorized') return;
     document.getElementById('stats').innerHTML = `<div class="stat-card"><h3>Error</h3><div class="value" style="font-size:14px;color:var(--highlight)">${esc(e.message)}</div></div>`;
   }
 }
@@ -361,7 +252,6 @@ async function loadMemories() {
       <span>Page ${currentPage+1} of ${totalPages} (${d.total} total)</span>
       <button onclick="window._changePage(1)" ${currentPage>=totalPages-1?'disabled':''}>Next</button>`;
   } catch (e) {
-    if (e.message === 'Unauthorized') return;
     table.innerHTML = `<tr><td colspan="7" style="color:var(--highlight)">${esc(e.message)}</td></tr>`;
   }
 }
@@ -390,7 +280,7 @@ window._showMemory = async function(id) {
     document.getElementById('modal-content').textContent = m.content;
     document.getElementById('modal').classList.add('active');
   } catch (e) {
-    if (e.message !== 'Unauthorized') alert('Failed to load memory: ' + e.message);
+    alert('Failed to load memory: ' + e.message);
   }
 };
 
@@ -398,12 +288,7 @@ function closeModal() { document.getElementById('modal').classList.remove('activ
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
 // --- Boot ---
-if (sessionStorage.getItem(AUTH_KEY)) {
-  hideLogin();
-  loadDashboard();
-} else {
-  showLogin();
-}
+loadDashboard();
 
 })();
 </script>
