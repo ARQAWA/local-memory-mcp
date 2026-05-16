@@ -11,7 +11,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export function registerAdminRoutes(app: Express, _service: MemoryService, rateLimiter?: RequestHandler): void {
   // Local-only admin UI. Access is protected by localhost binding in src/index.ts.
   app.get("/admin", (_req, res) => {
-    res.sendFile(join(__dirname, "..", "..", "public", "admin.html"));
+    res.sendFile("admin.html", { root: join(__dirname, "..", "..", "public") });
   });
 
   // All /admin/api routes are local-only; optional rate limiting may be applied.
