@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local Memory - Admin Dashboard</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#1a1a2e;--card:#16213e;--accent:#0f3460;--highlight:#e94560;
+  --text:#e0e0e0;--text-dim:#8892a4;--border:#2a2a4a;
+  --fact:#4a9eff;--decision:#a855f7;--procedure:#22c55e;
+  --episode:#f97316;--reference:#6b7280;--convention:#14b8a6;
+  --personal:#eab308;--team:#4a9eff;--org:#a855f7;--public:#22c55e;
+  --radius:8px;--shadow:0 2px 8px rgba(0,0,0,0.3);
+}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+a{color:var(--fact);text-decoration:none}
+
+.header{display:flex;align-items:center;gap:16px;padding:16px 24px;background:var(--card);border-bottom:1px solid var(--border)}
+.logo{font-size:20px;font-weight:700;color:var(--highlight);display:flex;align-items:center;gap:8px}
+.badge{font-size:11px;padding:2px 8px;border-radius:10px;background:var(--highlight);color:#fff;font-weight:600;text-transform:uppercase}
+.tabs{display:flex;gap:4px;margin-left:32px}
+.tab{padding:8px 16px;border-radius:var(--radius);cursor:pointer;color:var(--text-dim);font-size:14px;font-weight:500;border:none;background:none;transition:all .15s}
+.tab:hover{color:var(--text);background:var(--accent)}
+.tab.active{color:#fff;background:var(--accent)}
+.period-select{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-dim)}
+.period-select select{background:var(--accent);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;font-size:13px}
+
+.main{max-width:1400px;margin:0 auto;padding:24px}
+.panel{display:none}
+.panel.active{display:block}
+
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px}
+.stat-card{background:var(--card);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);border:1px solid var(--border)}
+.stat-card h3{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin-bottom:8px}
+.stat-card .value{font-size:28px;font-weight:700}
+
+.section{background:var(--card);border-radius:var(--radius);padding:20px;margin-bottom:16px;border:1px solid var(--border)}
+.section h2{font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin-bottom:16px}
+
+.bar-row{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:13px}
+.bar-label{width:100px;text-align:right;color:var(--text-dim);flex-shrink:0}
+.bar-track{flex:1;height:20px;background:var(--accent);border-radius:4px;overflow:hidden}
+.bar-fill{height:100%;border-radius:4px;transition:width .3s}
+.bar-count{width:40px;font-weight:600;flex-shrink:0}
+
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:8px 12px;border-bottom:2px solid var(--border);color:var(--text-dim);font-weight:600;text-transform:uppercase;font-size:11px;letter-spacing:0.5px}
+td{padding:8px 12px;border-bottom:1px solid var(--border)}
+tr:hover{background:rgba(255,255,255,0.03)}
+.type-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.scope-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+
+.search-bar{display:flex;gap:8px;margin-bottom:16px}
+.search-bar input{flex:1;padding:8px 12px;background:var(--accent);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:14px}
+.search-bar input::placeholder{color:var(--text-dim)}
+.search-bar select{padding:8px 12px;background:var(--accent);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px}
+.search-bar button{padding:8px 16px;background:var(--highlight);border:none;border-radius:var(--radius);color:#fff;font-weight:600;cursor:pointer}
+.pagination{display:flex;justify-content:center;align-items:center;gap:12px;margin-top:16px;font-size:13px}
+.pagination button{padding:6px 12px;background:var(--accent);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);cursor:pointer}
+.pagination button:disabled{opacity:0.3;cursor:default}
+
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:100;align-items:center;justify-content:center}
+.modal-overlay.active{display:flex}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;max-width:800px;width:90%;max-height:80vh;overflow-y:auto}
+.modal h2{margin-bottom:16px;font-size:16px}
+.modal pre{background:var(--bg);padding:12px;border-radius:var(--radius);overflow-x:auto;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.modal .close{float:right;cursor:pointer;font-size:20px;color:var(--text-dim);background:none;border:none}
+.modal .meta{display:grid;grid-template-columns:120px 1fr;gap:4px 12px;margin-bottom:16px;font-size:13px}
+.modal .meta dt{color:var(--text-dim)}
+
+.loading{text-align:center;padding:40px;color:var(--text-dim)}
+
+.login-overlay{position:fixed;inset:0;background:var(--bg);z-index:200;display:flex;align-items:center;justify-content:center}
+.login-overlay.hidden{display:none}
+.login-box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:32px;width:360px;max-width:90vw;box-shadow:0 8px 32px rgba(0,0,0,0.5)}
+.login-box h2{font-size:18px;margin-bottom:4px;color:var(--text);display:flex;align-items:center;gap:8px}
+.login-box .subtitle{font-size:13px;color:var(--text-dim);margin-bottom:20px}
+.login-box label{display:block;font-size:12px;color:var(--text-dim);margin-bottom:4px;margin-top:14px;text-transform:uppercase;letter-spacing:0.5px}
+.login-box input{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-size:14px;outline:none}
+.login-box input:focus{border-color:var(--fact)}
+.login-box .login-btn{width:100%;margin-top:20px;padding:10px;background:var(--highlight);color:#fff;border:none;border-radius:var(--radius);font-size:14px;font-weight:600;cursor:pointer;transition:opacity .15s}
+.login-box .login-btn:hover{opacity:0.9}
+.login-box .login-btn:disabled{opacity:0.5;cursor:default}
+.login-error{color:var(--highlight);font-size:13px;margin-top:12px;display:none}
+.logout-btn{background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:var(--radius);padding:4px 12px;font-size:12px;cursor:pointer;margin-left:auto;transition:all .15s}
+.logout-btn:hover{border-color:var(--highlight);color:var(--highlight)}
+</style>
+</head>
+<body>
+
+<!-- Login overlay -->
+<div class="login-overlay" id="login-overlay">
+  <div class="login-box">
+    <h2>local memory <span class="badge">Admin</span></h2>
+    <div class="subtitle">Sign in to access the admin dashboard</div>
+    <label for="login-user">Username</label>
+    <input id="login-user" type="text" placeholder="Username" autocomplete="username">
+    <label for="login-pass">Password</label>
+    <input id="login-pass" type="password" placeholder="Password" autocomplete="current-password">
+    <div class="login-error" id="login-error"></div>
+    <button class="login-btn" id="login-btn">Sign In</button>
+  </div>
+</div>
+
+<div class="header">
+  <div class="logo">local memory <span class="badge">Admin</span></div>
+  <div class="tabs">
+    <button class="tab active" data-tab="dashboard">Dashboard</button>
+    <button class="tab" data-tab="memories">All Memories</button>
+  </div>
+  <div class="period-select">
+    Period: <select id="days">
+      <option value="7">7 days</option>
+      <option value="30" selected>30 days</option>
+      <option value="90">90 days</option>
+      <option value="365">1 year</option>
+    </select>
+    <button class="logout-btn" id="logout-btn">Logout</button>
+  </div>
+</div>
+
+<div class="main">
+  <!-- Dashboard -->
+  <div class="panel active" id="panel-dashboard">
+    <div class="stat-grid" id="stats"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="section"><h2>By Type</h2><div id="chart-type"></div></div>
+      <div class="section"><h2>By Scope</h2><div id="chart-scope"></div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+      <div class="section"><h2>By Organization</h2><div id="chart-org"></div></div>
+      <div class="section"><h2>By Team</h2><div id="chart-team"></div></div>
+    </div>
+    <div class="section" style="margin-top:16px"><h2>Top Contributors</h2><div id="chart-creators"></div></div>
+  </div>
+
+  <!-- Memories -->
+  <div class="panel" id="panel-memories">
+    <div class="search-bar">
+      <input type="text" id="search-input" placeholder="Search memories...">
+      <select id="filter-type"><option value="">All types</option><option value="fact">Fact</option><option value="decision">Decision</option><option value="procedure">Procedure</option><option value="episode">Episode</option><option value="reference">Reference</option><option value="convention">Convention</option></select>
+      <select id="filter-scope"><option value="">All scopes</option><option value="personal">Personal</option><option value="team">Team</option><option value="org">Org</option><option value="public">Public</option></select>
+      <button id="search-btn">Search</button>
+    </div>
+    <div class="section">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Summary</th><th>Type</th><th>Scope</th><th>Org</th><th>User</th><th>Importance</th><th>Updated</th></tr>
+          </thead>
+          <tbody id="memories-table"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="pagination"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Memory detail modal -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <button class="close" id="modal-close-btn">&times;</button>
+    <h2 id="modal-title"></h2>
+    <dl class="meta" id="modal-meta"></dl>
+    <pre id="modal-content"></pre>
+  </div>
+</div>
+
+<script>
+(function() {
+'use strict';
+
+const TYPE_COLORS = {fact:'#4a9eff',decision:'#a855f7',procedure:'#22c55e',episode:'#f97316',reference:'#6b7280',convention:'#14b8a6'};
+const SCOPE_COLORS = {personal:'#eab308',team:'#4a9eff',org:'#a855f7',public:'#22c55e'};
+
+let currentPage = 0;
+const PAGE_SIZE = 50;
+let currentSearch = '';
+
+// --- Auth ---
+const AUTH_KEY = 'local-memory-admin-auth';
+
+function getAuthHeader() {
+  const cred = sessionStorage.getItem(AUTH_KEY);
+  return cred ? { 'Authorization': 'Basic ' + cred } : {};
+}
+
+async function adminFetch(url) {
+  const r = await fetch(url, { headers: getAuthHeader() });
+  if (r.status === 401) {
+    sessionStorage.removeItem(AUTH_KEY);
+    showLogin('Session expired. Please sign in again.');
+    throw new Error('Unauthorized');
+  }
+  if (!r.ok) throw new Error(r.statusText);
+  return r.json();
+}
+
+function showLogin(errorMsg) {
+  document.getElementById('login-overlay').classList.remove('hidden');
+  const errEl = document.getElementById('login-error');
+  if (errorMsg) { errEl.textContent = errorMsg; errEl.style.display = 'block'; }
+  else { errEl.style.display = 'none'; }
+  document.getElementById('login-user').focus();
+}
+
+function hideLogin() {
+  document.getElementById('login-overlay').classList.add('hidden');
+  document.getElementById('login-error').style.display = 'none';
+}
+
+async function attemptLogin() {
+  const user = document.getElementById('login-user').value.trim();
+  const pass = document.getElementById('login-pass').value;
+  const btn = document.getElementById('login-btn');
+  const errEl = document.getElementById('login-error');
+
+  if (!user || !pass) { errEl.textContent = 'Username and password are required.'; errEl.style.display = 'block'; return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Signing in...';
+  errEl.style.display = 'none';
+
+  const cred = btoa(user + ':' + pass);
+  try {
+    const r = await fetch('/admin/api/analytics?days=1', { headers: { 'Authorization': 'Basic ' + cred } });
+    if (r.status === 401) {
+      errEl.textContent = 'Invalid username or password.';
+      errEl.style.display = 'block';
+      return;
+    }
+    if (r.status === 403) {
+      errEl.textContent = 'Admin dashboard not configured on this server.';
+      errEl.style.display = 'block';
+      return;
+    }
+    if (!r.ok) {
+      errEl.textContent = 'Server error: ' + r.statusText;
+      errEl.style.display = 'block';
+      return;
+    }
+    sessionStorage.setItem(AUTH_KEY, cred);
+    hideLogin();
+    loadDashboard();
+  } catch (e) {
+    errEl.textContent = 'Connection failed: ' + e.message;
+    errEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sign In';
+  }
+}
+
+document.getElementById('login-btn').addEventListener('click', attemptLogin);
+document.getElementById('login-pass').addEventListener('keydown', e => { if (e.key === 'Enter') attemptLogin(); });
+document.getElementById('login-user').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('login-pass').focus(); });
+
+document.getElementById('logout-btn').addEventListener('click', () => {
+  sessionStorage.removeItem(AUTH_KEY);
+  showLogin();
+  document.getElementById('login-user').value = '';
+  document.getElementById('login-pass').value = '';
+});
+
+// --- Tabs ---
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+  document.getElementById('panel-' + t.dataset.tab).classList.add('active');
+  if (t.dataset.tab === 'memories') { currentPage = 0; loadMemories(); }
+}));
+
+document.getElementById('days').addEventListener('change', loadDashboard);
+document.getElementById('search-input').addEventListener('keydown', e => { if (e.key === 'Enter') searchMemories(); });
+document.getElementById('search-btn').addEventListener('click', searchMemories);
+document.getElementById('filter-type').addEventListener('change', filterChanged);
+document.getElementById('filter-scope').addEventListener('change', filterChanged);
+document.getElementById('modal-close-btn').addEventListener('click', closeModal);
+document.getElementById('modal').addEventListener('click', function(e) { if (e.target === this) closeModal(); });
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function barChart(container, data, colorMap) {
+  const el = document.getElementById(container);
+  if (!data || Object.keys(data).length === 0) { el.innerHTML = '<div style="color:var(--text-dim)">No data</div>'; return; }
+  const max = Math.max(1, ...Object.values(data));
+  el.innerHTML = Object.entries(data).map(([k, v]) => `
+    <div class="bar-row">
+      <span class="bar-label">${esc(k)}</span>
+      <div class="bar-track"><div class="bar-fill" style="width:${v/max*100}%;background:${colorMap[k]||'var(--fact)'}"></div></div>
+      <span class="bar-count">${v}</span>
+    </div>`).join('');
+}
+
+async function loadDashboard() {
+  const days = document.getElementById('days').value;
+  try {
+    const d = await adminFetch(`/admin/api/analytics?days=${days}`);
+    document.getElementById('stats').innerHTML = `
+      <div class="stat-card"><h3>Total Memories</h3><div class="value">${esc(String(d.total_memories))}</div></div>
+      <div class="stat-card"><h3>Created (${esc(String(days))}d)</h3><div class="value">${esc(String(d.created_last_period))}</div></div>
+      <div class="stat-card"><h3>Unique Tags</h3><div class="value">${esc(String(d.total_tags))}</div></div>
+      <div class="stat-card"><h3>Stale (90d+)</h3><div class="value">${esc(String(d.stale_memories))}</div></div>
+      <div class="stat-card"><h3>Avg Importance</h3><div class="value">${esc(Number(d.avg_importance).toFixed(2))}</div></div>
+      <div class="stat-card"><h3>Organizations</h3><div class="value">${esc(String(Object.keys(d.by_org).length))}</div></div>
+    `;
+    barChart('chart-type', d.by_type, TYPE_COLORS);
+    barChart('chart-scope', d.by_scope, SCOPE_COLORS);
+    barChart('chart-org', d.by_org, {});
+    barChart('chart-team', d.by_team, {});
+
+    const creatorsEl = document.getElementById('chart-creators');
+    if (d.by_creator.length === 0) {
+      creatorsEl.innerHTML = '<div style="color:var(--text-dim)">No data</div>';
+    } else {
+      const maxC = Math.max(1, d.by_creator[0]?.count || 1);
+      creatorsEl.innerHTML = d.by_creator.map(c => `
+        <div class="bar-row">
+          <span class="bar-label" title="${esc(c.org_id || '')}">${esc(c.creator || '(unknown)')}</span>
+          <div class="bar-track"><div class="bar-fill" style="width:${c.count/maxC*100}%;background:var(--fact)"></div></div>
+          <span class="bar-count">${c.count}</span>
+        </div>`).join('');
+    }
+  } catch (e) {
+    if (e.message === 'Unauthorized') return;
+    document.getElementById('stats').innerHTML = `<div class="stat-card"><h3>Error</h3><div class="value" style="font-size:14px;color:var(--highlight)">${esc(e.message)}</div></div>`;
+  }
+}
+
+async function loadMemories() {
+  const table = document.getElementById('memories-table');
+  table.innerHTML = '<tr><td colspan="7" class="loading">Loading...</td></tr>';
+  try {
+    const q = currentSearch ? `&q=${encodeURIComponent(currentSearch)}` : '';
+    const ft = document.getElementById('filter-type').value;
+    const fs = document.getElementById('filter-scope').value;
+    const typeQ = ft ? `&memory_type=${encodeURIComponent(ft)}` : '';
+    const scopeQ = fs ? `&scope=${encodeURIComponent(fs)}` : '';
+    const d = await adminFetch(`/admin/api/memories?limit=${PAGE_SIZE}&offset=${currentPage * PAGE_SIZE}${q}${typeQ}${scopeQ}`);
+    table.innerHTML = d.memories.map(m => `
+      <tr data-memory-id="${esc(m.id)}" class="memory-row" style="cursor:pointer">
+        <td>${esc(m.summary || '(no summary)')}</td>
+        <td><span class="type-badge" style="background:${TYPE_COLORS[m.memory_type]||'var(--accent)'}">${esc(m.memory_type)}</span></td>
+        <td><span class="scope-badge" style="background:${SCOPE_COLORS[m.scope]||'var(--accent)'}">${esc(m.scope)}</span></td>
+        <td>${esc(m.org_id || '')}</td>
+        <td>${esc(m.created_by || m.user_id || '')}</td>
+        <td>${((m.importance ?? 0) * 100).toFixed(0)}%</td>
+        <td>${new Date(m.updated_at).toLocaleDateString()}</td>
+      </tr>`).join('');
+    // Attach click handlers via event delegation (avoids inline onclick XSS)
+    table.querySelectorAll('.memory-row').forEach(row => {
+      row.addEventListener('click', () => window._showMemory(row.dataset.memoryId));
+    });
+    const totalPages = Math.ceil(d.total / PAGE_SIZE);
+    document.getElementById('pagination').innerHTML = `
+      <button onclick="window._changePage(-1)" ${currentPage===0?'disabled':''}>Prev</button>
+      <span>Page ${currentPage+1} of ${totalPages} (${d.total} total)</span>
+      <button onclick="window._changePage(1)" ${currentPage>=totalPages-1?'disabled':''}>Next</button>`;
+  } catch (e) {
+    if (e.message === 'Unauthorized') return;
+    table.innerHTML = `<tr><td colspan="7" style="color:var(--highlight)">${esc(e.message)}</td></tr>`;
+  }
+}
+
+window._changePage = function(dir) { currentPage = Math.max(0, currentPage + dir); loadMemories(); };
+function searchMemories() { currentSearch = document.getElementById('search-input').value; currentPage = 0; loadMemories(); }
+function filterChanged() { currentPage = 0; loadMemories(); }
+
+window._showMemory = async function(id) {
+  try {
+    const m = await adminFetch(`/admin/api/memories/${id}`);
+    document.getElementById('modal-title').textContent = m.summary || '(no summary)';
+    document.getElementById('modal-meta').innerHTML = `
+      <dt>ID</dt><dd>${esc(m.id)}</dd>
+      <dt>Type</dt><dd>${esc(m.memory_type)}</dd>
+      <dt>Scope</dt><dd>${esc(m.scope)}</dd>
+      <dt>Org</dt><dd>${esc(m.org_id || '-')}</dd>
+      <dt>User</dt><dd>${esc(m.user_id || '-')}</dd>
+      <dt>Created by</dt><dd>${esc(m.created_by || '-')}</dd>
+      <dt>Importance</dt><dd>${((m.importance ?? 0) * 100).toFixed(0)}%</dd>
+      <dt>Access count</dt><dd>${m.access_count}</dd>
+      <dt>Tags</dt><dd>${esc((m.tags || []).join(', ') || '-')}</dd>
+      <dt>Created</dt><dd>${new Date(m.created_at).toLocaleString()}</dd>
+      <dt>Updated</dt><dd>${new Date(m.updated_at).toLocaleString()}</dd>
+      <dt>Has embedding</dt><dd>${m.has_embedding ? 'Yes' : 'No'}</dd>`;
+    document.getElementById('modal-content').textContent = m.content;
+    document.getElementById('modal').classList.add('active');
+  } catch (e) {
+    if (e.message !== 'Unauthorized') alert('Failed to load memory: ' + e.message);
+  }
+};
+
+function closeModal() { document.getElementById('modal').classList.remove('active'); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+// --- Boot ---
+if (sessionStorage.getItem(AUTH_KEY)) {
+  hideLogin();
+  loadDashboard();
+} else {
+  showLogin();
+}
+
+})();
+</script>
+</body>
+</html>

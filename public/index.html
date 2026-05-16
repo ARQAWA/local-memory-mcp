@@ -1,0 +1,1183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local Memory - Memory Visualizer</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#1a1a2e;--card:#16213e;--accent:#0f3460;--highlight:#e94560;
+  --text:#e0e0e0;--text-dim:#9ca3b4;--border:#2a2a4a;
+  --fact:#4a9eff;--decision:#a855f7;--procedure:#22c55e;
+  --episode:#f97316;--reference:#6b7280;--convention:#14b8a6;
+  --personal:#eab308;--team:#4a9eff;--org:#a855f7;--public:#22c55e;
+  --radius:8px;--shadow:0 2px 8px rgba(0,0,0,0.3);
+}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+a{color:var(--fact);text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* Header */
+.header{display:flex;align-items:center;gap:16px;padding:16px 24px;background:var(--card);border-bottom:1px solid var(--border)}
+.logo{font-size:20px;font-weight:700;color:var(--highlight);display:flex;align-items:center;gap:8px}
+.logo svg{width:24px;height:24px}
+.tabs{display:flex;gap:4px;margin-left:32px}
+.tab{padding:8px 16px;border-radius:var(--radius);cursor:pointer;color:var(--text-dim);font-size:14px;font-weight:500;border:none;background:none;transition:all .15s}
+.tab:hover{color:var(--text);background:var(--accent)}
+.tab.active{color:#fff;background:var(--accent)}
+.toggle-wrap{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-dim)}
+.toggle{position:relative;width:36px;height:20px;cursor:pointer;display:inline-block}
+.toggle input{opacity:0;width:0;height:0}
+.toggle .slider{position:absolute;top:0;left:0;right:0;bottom:0;background:var(--border);border-radius:10px;transition:.2s}
+.toggle .slider::before{content:'';position:absolute;width:16px;height:16px;left:2px;bottom:2px;background:#fff;border-radius:50%;transition:.2s}
+.toggle input:checked+.slider{background:var(--fact)}
+.toggle input:checked+.slider::before{transform:translateX(16px)}
+
+/* Main */
+.main{max-width:1200px;margin:0 auto;padding:24px}
+.panel{display:none}
+.panel.active{display:block}
+
+/* Cards grid */
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+.stat-card{background:var(--card);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);border:1px solid var(--border)}
+.stat-card h3{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin-bottom:8px}
+.stat-card .value{font-size:32px;font-weight:700}
+.stat-card .chart{margin-top:12px}
+
+/* Bar chart */
+.bar-row{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:13px}
+.bar-label{width:80px;text-align:right;color:var(--text-dim);flex-shrink:0}
+.bar-track{flex:1;height:18px;background:var(--bg);border-radius:3px;overflow:hidden}
+.bar-fill{height:100%;border-radius:3px;transition:width .3s;display:flex;align-items:center;padding-left:6px;font-size:11px;font-weight:600;color:#fff;min-width:fit-content}
+.bar-count{width:36px;text-align:right;font-size:12px;color:var(--text-dim);flex-shrink:0}
+
+/* Most accessed list */
+.list-section{background:var(--card);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);border:1px solid var(--border)}
+.list-section h3{font-size:14px;color:var(--text-dim);margin-bottom:12px;text-transform:uppercase;letter-spacing:1px}
+.list-item{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)}
+.list-item:last-child{border-bottom:none}
+.list-item .badge{flex-shrink:0}
+.list-item .summary{flex:1;font-size:14px}
+.list-item .count{font-size:13px;color:var(--text-dim);flex-shrink:0}
+
+/* Badges */
+.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px}
+.badge-fact{background:rgba(74,158,255,0.2);color:var(--fact)}
+.badge-decision{background:rgba(168,85,247,0.2);color:var(--decision)}
+.badge-procedure{background:rgba(34,197,94,0.2);color:var(--procedure)}
+.badge-episode{background:rgba(249,115,22,0.2);color:var(--episode)}
+.badge-reference{background:rgba(107,114,128,0.2);color:var(--reference)}
+.badge-convention{background:rgba(20,184,166,0.2);color:var(--convention)}
+.badge-personal{background:rgba(234,179,8,0.2);color:var(--personal)}
+.badge-team{background:rgba(74,158,255,0.2);color:var(--team)}
+.badge-org{background:rgba(168,85,247,0.2);color:var(--org)}
+.badge-public{background:rgba(34,197,94,0.2);color:var(--public)}
+
+/* Filters */
+.filters{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:20px;align-items:center}
+.filters select,.filters input{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;font-size:13px;outline:none}
+.filters select:focus,.filters input:focus{border-color:var(--fact)}
+.filters input{min-width:200px}
+
+/* Memory cards */
+.memory-list{display:flex;flex-direction:column;gap:12px}
+.memory-card{background:var(--card);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);border:1px solid var(--border);cursor:pointer;transition:border-color .15s}
+.memory-card:hover{border-color:var(--fact)}
+.memory-card .mc-header{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.memory-card .mc-summary{font-size:15px;font-weight:500;margin-bottom:6px}
+.memory-card .mc-meta{font-size:12px;color:var(--text-dim);display:flex;gap:12px;flex-wrap:wrap}
+.memory-card .mc-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
+.memory-card .mc-tags .tag{background:var(--bg);color:var(--text-dim);padding:2px 6px;border-radius:4px;font-size:11px}
+.importance-bar{height:3px;border-radius:2px;margin-top:8px;background:var(--bg);overflow:hidden}
+.importance-bar .fill{height:100%;border-radius:2px;transition:width .3s}
+.mc-content{margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:13px;line-height:1.6;color:var(--text-dim);white-space:pre-wrap;max-height:400px;overflow-y:auto}
+
+/* Pagination */
+.pagination{display:flex;justify-content:center;gap:8px;margin-top:20px}
+.pagination button{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:6px 14px;cursor:pointer;font-size:13px}
+.pagination button:hover{border-color:var(--fact)}
+.pagination button:disabled{opacity:0.4;cursor:default}
+.pagination .page-info{display:flex;align-items:center;font-size:13px;color:var(--text-dim)}
+
+/* Search */
+.search-box{position:relative;margin-bottom:20px}
+.search-box input{width:100%;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;font-size:15px;outline:none}
+.search-box input:focus{border-color:var(--fact)}
+.search-box input::placeholder{color:var(--text-dim)}
+.search-results{display:flex;flex-direction:column;gap:12px}
+.search-card{background:var(--card);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);border:1px solid var(--border)}
+.search-card .sc-header{display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap}
+.search-card .sc-summary{font-size:15px;font-weight:500}
+.search-card .sc-score{font-size:12px;color:var(--text-dim)}
+.search-hint{text-align:center;color:var(--text-dim);margin-top:40px;font-size:14px}
+
+/* Graph */
+.graph-controls{display:flex;gap:10px;margin-bottom:16px;align-items:center}
+.graph-controls input{flex:1;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;font-size:13px;outline:none}
+.graph-controls input:focus{border-color:var(--fact)}
+.graph-controls button{background:var(--accent);color:#fff;border:none;border-radius:var(--radius);padding:8px 16px;cursor:pointer;font-size:13px;font-weight:500}
+.graph-controls button:hover{background:var(--fact)}
+.graph-container{background:var(--card);border-radius:var(--radius);border:1px solid var(--border);overflow:hidden;position:relative;min-height:500px}
+.graph-container svg{width:100%;height:500px;display:block}
+.graph-empty{display:flex;align-items:center;justify-content:center;height:500px;color:var(--text-dim);font-size:14px}
+.graph-legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--text-dim)}
+.graph-legend span{display:flex;align-items:center;gap:4px}
+.graph-legend .dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+
+/* Loading / empty */
+.loading{text-align:center;padding:40px;color:var(--text-dim);font-size:14px}
+.empty{text-align:center;padding:40px;color:var(--text-dim);font-size:14px}
+
+/* Identity bar */
+.identity-bar{display:flex;align-items:center;gap:8px;margin-left:auto;margin-right:12px}
+.id-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:500;background:rgba(74,158,255,0.15);color:var(--fact);white-space:nowrap}
+.id-chip .id-label{color:var(--text-dim);font-weight:400}
+.id-btn{background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:var(--radius);padding:4px 10px;font-size:11px;cursor:pointer;transition:all .15s;white-space:nowrap}
+.id-btn:hover{border-color:var(--fact);color:var(--text)}
+
+/* Identity overlay */
+.id-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100}
+.id-overlay.hidden{display:none}
+.id-form{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:28px;width:380px;max-width:90vw;box-shadow:0 8px 32px rgba(0,0,0,0.5)}
+.id-form h3{margin-bottom:16px;font-size:16px;color:var(--text)}
+.id-form label{display:block;font-size:12px;color:var(--text-dim);margin-bottom:4px;margin-top:12px}
+.id-form input{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;font-size:14px;outline:none}
+.id-form input:focus{border-color:var(--fact)}
+.id-form .id-actions{display:flex;gap:8px;margin-top:20px;justify-content:flex-end}
+.id-form .id-actions button{padding:8px 18px;border-radius:var(--radius);font-size:13px;font-weight:500;cursor:pointer;border:none}
+.id-form .btn-save{background:var(--fact);color:#fff}
+.id-form .btn-save:hover{opacity:0.9}
+.id-form .btn-cancel{background:var(--border);color:var(--text-dim)}
+.id-form .btn-cancel:hover{color:var(--text)}
+
+/* Responsive */
+@media(max-width:768px){
+  .header{flex-wrap:wrap}.tabs{margin-left:0;width:100%}
+  .identity-bar{width:100%;order:3;margin-left:0;flex-wrap:wrap}
+  .stat-grid{grid-template-columns:1fr 1fr}
+  .filters{flex-direction:column}
+  .filters select,.filters input{width:100%}
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/>
+      <line x1="12" y1="22" x2="12" y2="15.5"/>
+      <polyline points="22 8.5 12 15.5 2 8.5"/>
+      <polyline points="2 15.5 12 8.5 22 15.5"/>
+      <line x1="12" y1="2" x2="12" y2="8.5"/>
+    </svg>
+    local memory
+  </div>
+  <div class="tabs">
+    <button class="tab active" data-panel="dashboard">Dashboard</button>
+    <button class="tab" data-panel="memories">Memories</button>
+    <button class="tab" data-panel="search">Search</button>
+    <button class="tab" data-panel="graph">Graph</button>
+  </div>
+  <div class="identity-bar" id="identity-bar"></div>
+  <label class="toggle-wrap">
+    All orgs
+    <span class="toggle"><input type="checkbox" id="all-orgs"><span class="slider"></span></span>
+  </label>
+</div>
+
+<div class="main">
+
+  <!-- Dashboard -->
+  <div id="dashboard" class="panel active">
+    <div class="stat-grid" id="stats-grid">
+      <div class="stat-card"><h3>Total Memories</h3><div class="value" id="stat-total">--</div></div>
+      <div class="stat-card"><h3>By Type</h3><div class="chart" id="chart-type"></div></div>
+      <div class="stat-card"><h3>By Scope</h3><div class="chart" id="chart-scope"></div></div>
+      <div class="stat-card"><h3>Unique Tags</h3><div class="value" id="stat-tags">--</div></div>
+      <div class="stat-card"><h3>Stale (90d+)</h3><div class="value" id="stat-stale">--</div></div>
+    </div>
+    <div class="list-section">
+      <h3>Most Accessed Memories</h3>
+      <div id="most-accessed"></div>
+    </div>
+  </div>
+
+  <!-- Memories -->
+  <div id="memories" class="panel">
+    <div class="filters">
+      <select id="f-type"><option value="">All types</option><option value="fact">Fact</option><option value="decision">Decision</option><option value="procedure">Procedure</option><option value="episode">Episode</option><option value="reference">Reference</option><option value="convention">Convention</option></select>
+      <select id="f-scope"><option value="">All scopes</option><option value="personal">Personal</option><option value="team">Team</option><option value="org">Org</option><option value="public">Public</option></select>
+      <input id="f-team" type="text" placeholder="Team slug...">
+      <input id="f-tags" type="text" placeholder="Tags (comma separated)...">
+    </div>
+    <div class="memory-list" id="memory-list"></div>
+    <div class="pagination" id="pagination"></div>
+  </div>
+
+  <!-- Search -->
+  <div id="search" class="panel">
+    <div class="search-box"><input id="search-input" type="text" placeholder="Search memories..."></div>
+    <div class="filters">
+      <select id="s-type"><option value="">All types</option><option value="fact">Fact</option><option value="decision">Decision</option><option value="procedure">Procedure</option><option value="episode">Episode</option><option value="reference">Reference</option><option value="convention">Convention</option></select>
+      <select id="s-scope"><option value="">All scopes</option><option value="personal">Personal</option><option value="team">Team</option><option value="org">Org</option><option value="public">Public</option></select>
+      <input id="s-team" type="text" placeholder="Team slug...">
+      <input id="s-tags" type="text" placeholder="Tags (comma separated)...">
+    </div>
+    <div class="search-results" id="search-results">
+      <div class="search-hint">Type a query to search across all memories</div>
+    </div>
+    <div class="pagination" id="search-pagination"></div>
+  </div>
+
+  <!-- Graph -->
+  <div id="graph" class="panel">
+    <div class="graph-controls">
+      <input id="graph-id" type="text" placeholder="Enter memory ID to visualize relations...">
+      <button id="graph-btn">Load Graph</button>
+    </div>
+    <div class="graph-container" id="graph-container">
+      <div class="graph-empty">Enter a memory ID above and click Load Graph to visualize its relations</div>
+    </div>
+    <div class="graph-legend">
+      <span><span class="dot" style="background:var(--fact)"></span> Fact</span>
+      <span><span class="dot" style="background:var(--decision)"></span> Decision</span>
+      <span><span class="dot" style="background:var(--procedure)"></span> Procedure</span>
+      <span><span class="dot" style="background:var(--episode)"></span> Episode</span>
+      <span><span class="dot" style="background:var(--reference)"></span> Reference</span>
+      <span><span class="dot" style="background:var(--convention)"></span> Convention</span>
+    </div>
+  </div>
+
+</div>
+
+<div class="id-overlay hidden" id="id-overlay">
+  <div class="id-form">
+    <h3>Set Identity</h3>
+    <label for="id-org">Organization</label>
+    <input id="id-org" type="text" placeholder="e.g. mycompany">
+    <label for="id-team">Team</label>
+    <input id="id-team" type="text" placeholder="e.g. backend-team">
+    <label for="id-user">User</label>
+    <input id="id-user" type="text" placeholder="e.g. alice">
+    <label for="id-token">Local Token <span style="font-weight:normal;color:var(--text-dim)">(optional)</span></label>
+    <input id="id-token" type="password" placeholder="leave blank for local mode">
+    <button class="btn-cancel" id="id-generate-token" style="margin:4px 0 8px;font-size:12px">Generate local token</button>
+    <div class="id-actions">
+      <button class="btn-cancel" id="id-cancel">Cancel</button>
+      <button class="btn-save" id="id-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  // --- Config ---
+  const API = '/api';
+  const TYPE_COLORS = {fact:'#4a9eff',decision:'#a855f7',procedure:'#22c55e',episode:'#f97316',reference:'#6b7280',convention:'#14b8a6'};
+  const SCOPE_COLORS = {personal:'#eab308',team:'#4a9eff',org:'#a855f7',public:'#22c55e'};
+
+  // --- State ---
+  let currentPage = 0;
+  const PAGE_SIZE = 20;
+  let expandedId = null;
+  let searchTimer = null;
+
+  // --- Identity & Auth ---
+  const IDENTITY_KEY = 'local-memory-identity';
+  const TOKEN_KEY = 'local-memory-token';
+
+  // Validate identity values: alphanumeric, hyphens, underscores, dots, max 128 chars
+  function sanitizeIdentityValue(val) {
+    if (!val) return undefined;
+    const trimmed = val.trim().slice(0, 128);
+    return /^[a-zA-Z0-9._@\-]+$/.test(trimmed) ? trimmed : undefined;
+  }
+
+  function parseHashIdentity() {
+    const hash = window.location.hash.slice(1);
+    if (!hash) return null;
+    const params = new URLSearchParams(hash);
+    const org_id = sanitizeIdentityValue(params.get('org'));
+    const team_slug = sanitizeIdentityValue(params.get('team'));
+    const user_id = sanitizeIdentityValue(params.get('user'));
+    const rawToken = params.get('token') || undefined;
+    // Token format validation: three base64url segments separated by dots.
+    const token = rawToken && /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(rawToken) ? rawToken : undefined;
+    if (token) sessionStorage.setItem(TOKEN_KEY, token);
+    if (!org_id && !team_slug && !user_id && !token) return null;
+    return { org_id, team_slug, user_id };
+  }
+
+  function loadIdentity() {
+    // Priority: URL hash > localStorage
+    const fromHash = parseHashIdentity();
+    if (fromHash) {
+      localStorage.setItem(IDENTITY_KEY, JSON.stringify(fromHash));
+      // Clear hash so it doesn't stick around
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+      return fromHash;
+    }
+    try {
+      const stored = localStorage.getItem(IDENTITY_KEY);
+      if (stored) return JSON.parse(stored);
+    } catch { /* ignore */ }
+    return null;
+  }
+
+  function saveIdentity(id) {
+    if (id) {
+      localStorage.setItem(IDENTITY_KEY, JSON.stringify(id));
+    } else {
+      localStorage.removeItem(IDENTITY_KEY);
+    }
+    identity = id;
+    renderIdentityBar();
+  }
+
+  let identity = loadIdentity();
+
+  function renderIdentityBar() {
+    const bar = document.getElementById('identity-bar');
+    bar.innerHTML = '';
+    if (identity) {
+      if (identity.org_id) {
+        const chip = document.createElement('span');
+        chip.className = 'id-chip';
+        chip.innerHTML = '<span class="id-label">org:</span>' + escHtml(identity.org_id);
+        bar.appendChild(chip);
+      }
+      if (identity.team_slug) {
+        const chip = document.createElement('span');
+        chip.className = 'id-chip';
+        chip.innerHTML = '<span class="id-label">team:</span>' + escHtml(identity.team_slug);
+        bar.appendChild(chip);
+      }
+      if (identity.user_id) {
+        const chip = document.createElement('span');
+        chip.className = 'id-chip';
+        chip.innerHTML = '<span class="id-label">user:</span>' + escHtml(identity.user_id);
+        bar.appendChild(chip);
+      }
+      const btn = document.createElement('button');
+      btn.className = 'id-btn';
+      btn.id = 'id-edit';
+      btn.textContent = 'Change';
+      btn.addEventListener('click', showIdentityForm);
+      bar.appendChild(btn);
+      // Show token indicator
+      if (sessionStorage.getItem(TOKEN_KEY)) {
+        const tok = document.createElement('span');
+        tok.style.cssText = 'font-size:11px;color:#22c55e;margin-left:6px';
+        tok.textContent = 'token';
+        bar.appendChild(tok);
+      }
+    } else {
+      const btn = document.createElement('button');
+      btn.className = 'id-btn';
+      btn.id = 'id-edit';
+      btn.textContent = 'Set Identity';
+      btn.addEventListener('click', showIdentityForm);
+      bar.appendChild(btn);
+    }
+  }
+
+  function showIdentityForm() {
+    const overlay = document.getElementById('id-overlay');
+    overlay.classList.remove('hidden');
+    // Pre-fill from current identity
+    document.getElementById('id-org').value = (identity && identity.org_id) || '';
+    document.getElementById('id-team').value = (identity && identity.team_slug) || '';
+    document.getElementById('id-user').value = (identity && identity.user_id) || '';
+    document.getElementById('id-token').value = sessionStorage.getItem(TOKEN_KEY) || '';
+    document.getElementById('id-org').focus();
+  }
+
+  function hideIdentityForm() {
+    document.getElementById('id-overlay').classList.add('hidden');
+  }
+
+  document.getElementById('id-generate-token').addEventListener('click', async function(e) {
+    e.preventDefault();
+    const org = document.getElementById('id-org').value.trim() || 'default';
+    const user = document.getElementById('id-user').value.trim() || 'ui-user';
+    try {
+      const res = await fetch('/api/token/generate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ org_id: org, user_id: user, role: 'admin' })
+      });
+      if (!res.ok) throw new Error('Token generation failed: ' + res.status);
+      const data = await res.json();
+      if (data.token) {
+        document.getElementById('id-token').value = data.token;
+      }
+    } catch (err) {
+      alert('Failed to generate token: ' + err.message);
+    }
+  });
+
+  document.getElementById('id-save').addEventListener('click', function() {
+    const org = sanitizeIdentityValue(document.getElementById('id-org').value);
+    const team = sanitizeIdentityValue(document.getElementById('id-team').value);
+    const user = sanitizeIdentityValue(document.getElementById('id-user').value);
+    const rawToken = document.getElementById('id-token').value.trim();
+    // Validate token format: three base64url segments separated by dots.
+    const token = rawToken && /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(rawToken) ? rawToken : '';
+    if (!org && !user && !team && !token) {
+      if (!rawToken) { document.getElementById('id-org').focus(); }
+      else { alert('Invalid token format. Expected three base64url segments.'); }
+      return;
+    }
+    // Save token separately. Session storage clears it when the tab closes.
+    if (token) {
+      sessionStorage.setItem(TOKEN_KEY, token);
+    } else {
+      sessionStorage.removeItem(TOKEN_KEY);
+    }
+    // Remove auth warning if present
+    const warn = document.querySelector('.auth-warning');
+    if (warn) warn.remove();
+
+    const id = {};
+    if (org) id.org_id = org;
+    if (team) id.team_slug = team;
+    if (user) id.user_id = user;
+    saveIdentity(id);
+    hideIdentityForm();
+    // Reload current panel
+    const active = document.querySelector('.tab.active');
+    const panel = active ? active.dataset.panel : 'dashboard';
+    if (panel === 'dashboard') loadDashboard();
+    else if (panel === 'memories') loadMemories();
+    else if (panel === 'search') doSearch();
+    else if (panel === 'graph') { const gid = $('#graph-id').value.trim(); if (gid) loadGraph(gid); }
+  });
+
+  document.getElementById('id-cancel').addEventListener('click', hideIdentityForm);
+
+  document.getElementById('id-overlay').addEventListener('click', function(e) {
+    if (e.target === this) hideIdentityForm();
+  });
+
+  // --- Helpers ---
+  function $(sel) { return document.querySelector(sel); }
+  function $$(sel) { return document.querySelectorAll(sel); }
+  function el(tag, attrs, children) {
+    const e = document.createElement(tag);
+    if (attrs) Object.entries(attrs).forEach(([k,v]) => {
+      if (k === 'class') e.className = v;
+      else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+      else if (k === 'text') e.textContent = v;
+      else e.setAttribute(k, v);
+    });
+    if (children) {
+      if (typeof children === 'string') e.textContent = children;
+      else if (Array.isArray(children)) children.forEach(c => { if (c) e.appendChild(c); });
+      else e.appendChild(children);
+    }
+    return e;
+  }
+
+  function allOrgs() { return $('#all-orgs').checked; }
+
+  async function api(path) {
+    const sep = path.includes('?') ? '&' : '?';
+    const url = allOrgs() ? API + path + sep + 'all_orgs=true' : API + path;
+    const headers = {};
+    // Token is optional in local mode.
+    const token = sessionStorage.getItem(TOKEN_KEY);
+    if (token) {
+      headers['Authorization'] = 'Bearer ' + token;
+    }
+    // Also send identity headers (used when INTERNAL_AUTH=true)
+    if (identity) {
+      if (identity.org_id) headers['x-engram-org'] = identity.org_id;
+      if (identity.team_slug) headers['x-engram-team'] = identity.team_slug;
+      if (identity.user_id) headers['x-engram-user'] = identity.user_id;
+    }
+    const res = await fetch(url, { headers });
+    if (res.status === 401 && !token) {
+      // No token and got 401 — prompt user to set a token
+      const bar = document.getElementById('identity-bar');
+      if (bar && !bar.querySelector('.auth-warning')) {
+        const warn = document.createElement('span');
+        warn.className = 'auth-warning';
+        warn.style.cssText = 'color:#e94560;font-size:12px;cursor:pointer;margin-left:8px';
+        warn.textContent = 'Auth required — click Identity to set token';
+        warn.onclick = () => $('#id-edit').click();
+        bar.appendChild(warn);
+      }
+    }
+    if (!res.ok) {
+      let detail = '';
+      try { const b = await res.json(); detail = b.error || JSON.stringify(b); } catch { /* non-JSON */ }
+      throw new Error(`API error: ${res.status}${detail ? ' — ' + detail.slice(0, 200) : ''}`);
+    }
+    try { return await res.json(); } catch { throw new Error(`API error: ${res.status} (non-JSON response)`); }
+  }
+
+  function badge(type, category) {
+    const safe = String(type).replace(/[^a-zA-Z0-9_-]/g, '');
+    return el('span', {class: `badge badge-${safe}`, text: type});
+  }
+
+  function importanceColor(val) {
+    if (val >= 0.7) return '#22c55e';
+    if (val >= 0.4) return '#eab308';
+    return '#e94560';
+  }
+
+  function fmtDate(d) {
+    if (!d) return '--';
+    return new Date(d).toLocaleDateString('en-US', {year:'numeric',month:'short',day:'numeric'});
+  }
+
+  function shortId(id) {
+    if (!id) return '';
+    return id.substring(0, 8);
+  }
+
+  // --- Tab navigation ---
+  $$('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      $$('.tab').forEach(t => t.classList.remove('active'));
+      $$('.panel').forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      const panelId = tab.dataset.panel;
+      $('#' + panelId).classList.add('active');
+      if (panelId === 'dashboard') loadDashboard();
+      if (panelId === 'memories') loadMemories();
+    });
+  });
+
+  // --- Dashboard ---
+  async function loadDashboard() {
+    try {
+      $('#stat-total').textContent = '...';
+      $('#stat-tags').textContent = '...';
+      $('#stat-stale').textContent = '...';
+      const stats = await api('/stats');
+      $('#stat-total').textContent = stats.total_memories;
+      $('#stat-tags').textContent = stats.total_tags;
+      $('#stat-stale').textContent = stats.stale_count;
+
+      // Type chart
+      const typeEl = $('#chart-type');
+      typeEl.innerHTML = '';
+      const maxType = Math.max(1, ...Object.values(stats.by_type));
+      for (const [type, count] of Object.entries(stats.by_type)) {
+        const pct = Math.round((count / maxType) * 100);
+        const row = el('div', {class:'bar-row'}, [
+          el('span', {class:'bar-label', text: type}),
+          el('div', {class:'bar-track'}, [
+            el('div', {class:'bar-fill', style:`width:${pct}%;background:${TYPE_COLORS[type]||'#6b7280'}`}, String(count))
+          ]),
+        ]);
+        typeEl.appendChild(row);
+      }
+      if (Object.keys(stats.by_type).length === 0) {
+        typeEl.innerHTML = '<div style="color:var(--text-dim);font-size:13px">No data yet</div>';
+      }
+
+      // Scope chart
+      const scopeEl = $('#chart-scope');
+      scopeEl.innerHTML = '';
+      const maxScope = Math.max(1, ...Object.values(stats.by_scope));
+      for (const [scope, count] of Object.entries(stats.by_scope)) {
+        const pct = Math.round((count / maxScope) * 100);
+        const row = el('div', {class:'bar-row'}, [
+          el('span', {class:'bar-label', text: scope}),
+          el('div', {class:'bar-track'}, [
+            el('div', {class:'bar-fill', style:`width:${pct}%;background:${SCOPE_COLORS[scope]||'#6b7280'}`}, String(count))
+          ]),
+        ]);
+        scopeEl.appendChild(row);
+      }
+      if (Object.keys(stats.by_scope).length === 0) {
+        scopeEl.innerHTML = '<div style="color:var(--text-dim);font-size:13px">No data yet</div>';
+      }
+
+      // Most accessed
+      const maEl = $('#most-accessed');
+      maEl.innerHTML = '';
+      if (stats.most_accessed.length === 0) {
+        maEl.innerHTML = '<div class="empty">No memories yet</div>';
+      } else {
+        stats.most_accessed.forEach(m => {
+          const item = el('div', {class:'list-item'}, [
+            badge(m.memory_type || 'reference'),
+            el('span', {class:'summary', text: m.summary || '(no summary)'}),
+            el('span', {class:'count', text: m.access_count + ' accesses'}),
+          ]);
+          item.style.cursor = 'pointer';
+          item.addEventListener('click', () => {
+            // Switch to graph view for this memory
+            $$('.tab').forEach(t => t.classList.remove('active'));
+            $$('.panel').forEach(p => p.classList.remove('active'));
+            $$('.tab[data-panel="graph"]')[0].classList.add('active');
+            $('#graph').classList.add('active');
+            $('#graph-id').value = m.id;
+            loadGraph(m.id);
+          });
+          maEl.appendChild(item);
+        });
+      }
+    } catch (err) {
+      $('#stat-total').textContent = 'ERR';
+      console.error('Dashboard load error:', err);
+    }
+  }
+
+  // --- Memories ---
+  async function loadMemories() {
+    const list = $('#memory-list');
+    const pag = $('#pagination');
+    list.innerHTML = '<div class="loading">Loading...</div>';
+    pag.innerHTML = '';
+
+    try {
+      const params = new URLSearchParams();
+      const type = $('#f-type').value;
+      const scope = $('#f-scope').value;
+      const team = $('#f-team').value.trim();
+      const tags = $('#f-tags').value.trim();
+      if (type) params.set('memory_type', type);
+      if (scope) params.set('scope', scope);
+      if (team) params.set('team_slug', team);
+      if (tags) params.set('tags', tags);
+      params.set('limit', PAGE_SIZE);
+      params.set('offset', currentPage * PAGE_SIZE);
+
+      const memories = await api('/memories?' + params.toString());
+      list.innerHTML = '';
+
+      if (memories.length === 0) {
+        list.innerHTML = '<div class="empty">No memories found</div>';
+      } else {
+        memories.forEach(m => {
+          const card = createMemoryCard(m);
+          list.appendChild(card);
+        });
+      }
+
+      // Pagination
+      const prevBtn = el('button', {text: 'Previous', onclick: () => { currentPage = Math.max(0, currentPage - 1); loadMemories(); }});
+      const nextBtn = el('button', {text: 'Next', onclick: () => { currentPage++; loadMemories(); }});
+      if (currentPage === 0) prevBtn.disabled = true;
+      if (memories.length < PAGE_SIZE) nextBtn.disabled = true;
+      const info = el('span', {class:'page-info', text: `Page ${currentPage + 1}`});
+      pag.appendChild(prevBtn);
+      pag.appendChild(info);
+      pag.appendChild(nextBtn);
+    } catch (err) {
+      const errDiv = el('div', {class: 'empty'});
+      errDiv.textContent = 'Error loading memories: ' + err.message;
+      list.innerHTML = '';
+      list.appendChild(errDiv);
+    }
+  }
+
+  function createMemoryCard(m) {
+    const card = el('div', {class:'memory-card', 'data-id': m.id});
+
+    const header = el('div', {class:'mc-header'}, [
+      badge(m.memory_type),
+      badge(m.scope),
+    ]);
+
+    const summary = el('div', {class:'mc-summary', text: m.summary || '(no summary)'});
+
+    const meta = el('div', {class:'mc-meta'}, [
+      el('span', {text: 'Created: ' + fmtDate(m.created_at)}),
+      el('span', {text: 'ID: ' + shortId(m.id)}),
+      el('span', {text: 'Accessed: ' + (m.access_count || 0) + 'x'}),
+    ]);
+
+    const tagsDiv = el('div', {class:'mc-tags'});
+    if (m.tags && m.tags.length > 0) {
+      m.tags.slice(0, 10).forEach(t => {
+        tagsDiv.appendChild(el('span', {class:'tag', text: t}));
+      });
+      if (m.tags.length > 10) {
+        tagsDiv.appendChild(el('span', {class:'tag', text: '+' + (m.tags.length - 10)}));
+      }
+    }
+
+    const impBar = el('div', {class:'importance-bar'});
+    const impPct = Math.round((m.importance || 0) * 100);
+    const impFill = el('div', {class:'fill', style: `width:${impPct}%;background:${importanceColor(m.importance || 0)}`});
+    impBar.appendChild(impFill);
+
+    card.appendChild(header);
+    card.appendChild(summary);
+    card.appendChild(meta);
+    card.appendChild(tagsDiv);
+    card.appendChild(impBar);
+
+    card.addEventListener('click', () => {
+      // Toggle content expand
+      const existing = card.querySelector('.mc-content');
+      if (existing) {
+        existing.remove();
+        return;
+      }
+      // Close other expanded
+      $$('.mc-content').forEach(c => c.remove());
+      const content = el('div', {class:'mc-content', text: m.content || '(no content)'});
+
+      // Add "View in Graph" link
+      const graphLink = el('div', {style:'margin-top:12px'});
+      const link = el('a', {text: 'View relations in graph', href:'#', style:'font-size:12px'});
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        $$('.tab').forEach(t => t.classList.remove('active'));
+        $$('.panel').forEach(p => p.classList.remove('active'));
+        $$('.tab[data-panel="graph"]')[0].classList.add('active');
+        $('#graph').classList.add('active');
+        $('#graph-id').value = m.id;
+        loadGraph(m.id);
+      });
+      graphLink.appendChild(link);
+      content.appendChild(graphLink);
+
+      card.appendChild(content);
+    });
+
+    return card;
+  }
+
+  // Filter change handlers
+  ['#f-type','#f-scope'].forEach(sel => {
+    $(sel).addEventListener('change', () => { currentPage = 0; loadMemories(); });
+  });
+  ['#f-team','#f-tags'].forEach(sel => {
+    let t;
+    $(sel).addEventListener('input', () => {
+      clearTimeout(t);
+      t = setTimeout(() => { currentPage = 0; loadMemories(); }, 400);
+    });
+  });
+
+  // --- Search ---
+  let searchPage = 0;
+  const SEARCH_LIMIT = 20;
+
+  $('#search-input').addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchPage = 0;
+    searchTimer = setTimeout(doSearch, 300);
+  });
+
+  async function doSearch() {
+    const q = $('#search-input').value.trim();
+    const results = $('#search-results');
+    const paginationEl = $('#search-pagination');
+
+    if (!q) {
+      results.innerHTML = '<div class="search-hint">Type a query to search across all memories</div>';
+      paginationEl.innerHTML = '';
+      return;
+    }
+
+    results.innerHTML = '<div class="loading">Searching...</div>';
+    paginationEl.innerHTML = '';
+
+    try {
+      const params = new URLSearchParams({q, limit: String(SEARCH_LIMIT), offset: String(searchPage * SEARCH_LIMIT)});
+      const type = $('#s-type').value;
+      const scope = $('#s-scope').value;
+      const sTeam = $('#s-team').value.trim();
+      const sTags = $('#s-tags').value.trim();
+      if (type) params.set('memory_type', type);
+      if (scope) params.set('scope', scope);
+      if (sTeam) params.set('team_slug', sTeam);
+      if (sTags) params.set('tags', sTags);
+
+      const resp = await api('/memories/search?' + params.toString());
+      results.innerHTML = '';
+
+      // API returns {results: [...], total: N} or bare array
+      const data = Array.isArray(resp) ? resp : (resp.results || []);
+      const total = Array.isArray(resp) ? data.length : (resp.total || data.length);
+
+      if (data.length === 0 && searchPage === 0) {
+        results.innerHTML = '<div class="empty">No results found</div>';
+        return;
+      }
+
+      if (data.length === 0 && searchPage > 0) {
+        searchPage = 0;
+        doSearch();
+        return;
+      }
+
+      const totalPages = Math.ceil(total / SEARCH_LIMIT);
+
+      // Show result count
+      if (total > SEARCH_LIMIT) {
+        const start = searchPage * SEARCH_LIMIT;
+        const countInfo = el('div', {class:'search-hint', text: `Showing ${start + 1}-${start + data.length} of ${total} results`});
+        results.appendChild(countInfo);
+      }
+
+      data.forEach(r => {
+        const card = el('div', {class:'search-card'});
+        const header = el('div', {class:'sc-header'}, [
+          badge(r.memory_type),
+          badge(r.scope),
+          el('span', {class:'badge', style:'background:rgba(255,255,255,0.1);color:var(--text-dim)', text: r.match_type || 'fts'}),
+        ]);
+        const summary = el('div', {class:'sc-summary', text: r.summary || '(no summary)'});
+        const score = el('div', {class:'sc-score', text: `Score: ${(r.score || 0).toFixed(3)} | ID: ${shortId(r.id)}`});
+
+        card.appendChild(header);
+        card.appendChild(summary);
+        card.appendChild(score);
+
+        card.style.cursor = 'pointer';
+        card.addEventListener('click', () => {
+          $$('.tab').forEach(t => t.classList.remove('active'));
+          $$('.panel').forEach(p => p.classList.remove('active'));
+          $$('.tab[data-panel="graph"]')[0].classList.add('active');
+          $('#graph').classList.add('active');
+          $('#graph-id').value = r.id;
+          loadGraph(r.id);
+        });
+
+        results.appendChild(card);
+      });
+
+      // Search pagination controls
+      if (totalPages > 1) {
+        for (let p = 0; p < totalPages; p++) {
+          const btn = el('button', {text: String(p + 1)});
+          if (p === searchPage) btn.classList.add('active');
+          btn.addEventListener('click', () => { searchPage = p; doSearch(); });
+          paginationEl.appendChild(btn);
+        }
+      }
+    } catch (err) {
+      const errDiv = el('div', {class: 'empty'});
+      errDiv.textContent = 'Search error: ' + err.message;
+      results.innerHTML = '';
+      results.appendChild(errDiv);
+    }
+  }
+
+  ['#s-type','#s-scope'].forEach(sel => {
+    $(sel).addEventListener('change', () => { searchPage = 0; doSearch(); });
+  });
+  (function() {
+    let st, stTags;
+    $('#s-team').addEventListener('input', () => {
+      clearTimeout(st);
+      searchPage = 0;
+      st = setTimeout(doSearch, 400);
+    });
+    $('#s-tags').addEventListener('input', () => {
+      clearTimeout(stTags);
+      searchPage = 0;
+      stTags = setTimeout(doSearch, 400);
+    });
+  })();
+
+  // --- Graph ---
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  function tryLoadGraph() {
+    const id = $('#graph-id').value.trim();
+    if (!id) return;
+    if (!UUID_RE.test(id)) { alert('Please enter a valid UUID'); return; }
+    loadGraph(id);
+  }
+  $('#graph-btn').addEventListener('click', tryLoadGraph);
+  $('#graph-id').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') tryLoadGraph();
+  });
+
+  async function loadGraph(memoryId) {
+    const container = $('#graph-container');
+    container.innerHTML = '<div class="loading" style="padding-top:200px">Loading relations...</div>';
+
+    try {
+      const [memory, relations] = await Promise.all([
+        api('/memories/' + memoryId),
+        api('/relations/' + memoryId),
+      ]);
+
+      if (!relations || relations.length === 0) {
+        container.innerHTML = '<div class="graph-empty">No relations found for this memory. This memory has no connections to other memories.</div>';
+
+        // Still show the center node info
+        const info = el('div', {style:'text-align:center;padding:16px;color:var(--text-dim);font-size:13px'});
+        info.innerHTML = `<strong style="color:var(--text)">${escHtml(memory.summary || shortId(memoryId))}</strong><br>Type: ${escHtml(memory.memory_type)} | Scope: ${escHtml(memory.scope)}`;
+        container.appendChild(info);
+        return;
+      }
+
+      // Build node list
+      const nodes = new Map();
+      nodes.set(memoryId, {
+        id: memoryId,
+        label: memory.summary || shortId(memoryId),
+        type: memory.memory_type,
+        isCenter: true,
+      });
+
+      const edges = [];
+      for (const rel of relations) {
+        const otherId = rel.source_id === memoryId ? rel.target_id : rel.source_id;
+        const otherSummary = rel.source_id === memoryId ? rel.target_summary : rel.source_summary;
+        const otherType = rel.source_id === memoryId ? rel.target_type : rel.source_type;
+
+        if (!nodes.has(otherId)) {
+          nodes.set(otherId, {
+            id: otherId,
+            label: otherSummary || shortId(otherId),
+            type: otherType || 'reference',
+            isCenter: false,
+          });
+        }
+
+        edges.push({
+          source: rel.source_id,
+          target: rel.target_id,
+          type: rel.relation_type,
+          desc: rel.description,
+        });
+      }
+
+      renderGraph(container, nodes, edges, memoryId);
+    } catch (err) {
+      const errDiv = el('div', {class: 'graph-empty'});
+      errDiv.textContent = 'Error loading graph: ' + err.message;
+      container.innerHTML = '';
+      container.appendChild(errDiv);
+    }
+  }
+
+  function escHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  function renderGraph(container, nodesMap, edges, centerId) {
+    const W = container.clientWidth || 800;
+    const H = 500;
+    const nodeArr = Array.from(nodesMap.values());
+    const nodeCount = nodeArr.length;
+
+    // Position nodes: center node in middle, others in a circle
+    const cx = W / 2;
+    const cy = H / 2;
+    const radius = Math.min(W, H) * 0.32;
+
+    let otherIdx = 0;
+    const otherCount = nodeCount - 1;
+
+    const positions = new Map();
+    nodeArr.forEach(n => {
+      if (n.isCenter) {
+        positions.set(n.id, {x: cx, y: cy});
+      } else {
+        const angle = (otherIdx / Math.max(1, otherCount)) * Math.PI * 2 - Math.PI / 2;
+        positions.set(n.id, {
+          x: cx + radius * Math.cos(angle),
+          y: cy + radius * Math.sin(angle),
+        });
+        otherIdx++;
+      }
+    });
+
+    // Apply simple force simulation (10 iterations)
+    const posArr = nodeArr.map(n => ({...n, ...positions.get(n.id)}));
+    for (let iter = 0; iter < 30; iter++) {
+      // Repulsion between non-center nodes
+      for (let i = 0; i < posArr.length; i++) {
+        if (posArr[i].isCenter) continue;
+        for (let j = i + 1; j < posArr.length; j++) {
+          if (posArr[j].isCenter) continue;
+          const dx = posArr[i].x - posArr[j].x;
+          const dy = posArr[i].y - posArr[j].y;
+          const dist = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+          if (dist < 120) {
+            const force = (120 - dist) * 0.3;
+            const fx = (dx / dist) * force;
+            const fy = (dy / dist) * force;
+            posArr[i].x += fx;
+            posArr[i].y += fy;
+            posArr[j].x -= fx;
+            posArr[j].y -= fy;
+          }
+        }
+        // Keep in bounds
+        posArr[i].x = Math.max(60, Math.min(W - 60, posArr[i].x));
+        posArr[i].y = Math.max(40, Math.min(H - 40, posArr[i].y));
+      }
+    }
+    posArr.forEach(n => positions.set(n.id, {x: n.x, y: n.y}));
+
+    // Build SVG
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.setAttribute('width', W);
+    svg.setAttribute('height', H);
+    svg.style.width = '100%';
+    svg.style.height = H + 'px';
+
+    // Defs for arrowhead
+    const defs = document.createElementNS(ns, 'defs');
+    const marker = document.createElementNS(ns, 'marker');
+    marker.setAttribute('id', 'arrow');
+    marker.setAttribute('viewBox', '0 0 10 10');
+    marker.setAttribute('refX', '10');
+    marker.setAttribute('refY', '5');
+    marker.setAttribute('markerWidth', '8');
+    marker.setAttribute('markerHeight', '8');
+    marker.setAttribute('orient', 'auto-start-reverse');
+    const path = document.createElementNS(ns, 'path');
+    path.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
+    path.setAttribute('fill', '#5a5a7a');
+    marker.appendChild(path);
+    defs.appendChild(marker);
+    svg.appendChild(defs);
+
+    // Draw edges
+    edges.forEach(e => {
+      const src = positions.get(e.source);
+      const tgt = positions.get(e.target);
+      if (!src || !tgt) return;
+
+      // Calculate shortened line (stop at node boundary)
+      const dx = tgt.x - src.x;
+      const dy = tgt.y - src.y;
+      const dist = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+      const nodeR = 28;
+      const sx = src.x + (dx / dist) * nodeR;
+      const sy = src.y + (dy / dist) * nodeR;
+      const tx = tgt.x - (dx / dist) * nodeR;
+      const ty = tgt.y - (dy / dist) * nodeR;
+
+      const line = document.createElementNS(ns, 'line');
+      line.setAttribute('x1', sx);
+      line.setAttribute('y1', sy);
+      line.setAttribute('x2', tx);
+      line.setAttribute('y2', ty);
+      line.setAttribute('stroke', '#3a3a5a');
+      line.setAttribute('stroke-width', '2');
+      line.setAttribute('marker-end', 'url(#arrow)');
+      svg.appendChild(line);
+
+      // Edge label
+      const mx = (src.x + tgt.x) / 2;
+      const my = (src.y + tgt.y) / 2;
+      const label = document.createElementNS(ns, 'text');
+      label.setAttribute('x', mx);
+      label.setAttribute('y', my - 6);
+      label.setAttribute('text-anchor', 'middle');
+      label.setAttribute('fill', '#6a6a8a');
+      label.setAttribute('font-size', '10');
+      label.setAttribute('font-family', 'inherit');
+      label.textContent = e.type;
+      svg.appendChild(label);
+    });
+
+    // Draw nodes
+    nodeArr.forEach(n => {
+      const pos = positions.get(n.id);
+      const g = document.createElementNS(ns, 'g');
+      g.style.cursor = n.isCenter ? 'default' : 'pointer';
+
+      if (!n.isCenter) {
+        g.addEventListener('click', () => {
+          $('#graph-id').value = n.id;
+          loadGraph(n.id);
+        });
+      }
+
+      const circle = document.createElementNS(ns, 'circle');
+      circle.setAttribute('cx', pos.x);
+      circle.setAttribute('cy', pos.y);
+      circle.setAttribute('r', n.isCenter ? 30 : 22);
+      circle.setAttribute('fill', TYPE_COLORS[n.type] || '#6b7280');
+      circle.setAttribute('opacity', n.isCenter ? '1' : '0.8');
+      if (n.isCenter) {
+        circle.setAttribute('stroke', '#fff');
+        circle.setAttribute('stroke-width', '3');
+      }
+      g.appendChild(circle);
+
+      // Node label (truncated)
+      const labelText = n.label.length > 24 ? n.label.substring(0, 22) + '..' : n.label;
+      const text = document.createElementNS(ns, 'text');
+      text.setAttribute('x', pos.x);
+      text.setAttribute('y', pos.y + (n.isCenter ? 46 : 36));
+      text.setAttribute('text-anchor', 'middle');
+      text.setAttribute('fill', n.isCenter ? '#fff' : '#b0b0c0');
+      text.setAttribute('font-size', n.isCenter ? '12' : '11');
+      text.setAttribute('font-family', 'inherit');
+      text.setAttribute('font-weight', n.isCenter ? '600' : '400');
+      text.textContent = labelText;
+      g.appendChild(text);
+
+      // Type abbreviation inside circle
+      const abbr = document.createElementNS(ns, 'text');
+      abbr.setAttribute('x', pos.x);
+      abbr.setAttribute('y', pos.y + 4);
+      abbr.setAttribute('text-anchor', 'middle');
+      abbr.setAttribute('fill', '#fff');
+      abbr.setAttribute('font-size', n.isCenter ? '12' : '10');
+      abbr.setAttribute('font-weight', '700');
+      abbr.setAttribute('font-family', 'inherit');
+      abbr.textContent = n.type.substring(0, 3).toUpperCase();
+      g.appendChild(abbr);
+
+      svg.appendChild(g);
+    });
+
+    container.innerHTML = '';
+    container.appendChild(svg);
+  }
+
+  // --- All Orgs toggle ---
+  $('#all-orgs').addEventListener('change', async () => {
+    currentPage = 0;
+    const active = document.querySelector('.tab.active');
+    const panel = active ? active.dataset.panel : 'dashboard';
+    try {
+      if (panel === 'dashboard') await loadDashboard();
+      else if (panel === 'memories') await loadMemories();
+      else if (panel === 'search') await doSearch();
+      else if (panel === 'graph') { const gid = $('#graph-id').value.trim(); if (gid) await loadGraph(gid); }
+    } catch (err) {
+      if (err.message && err.message.includes('403')) {
+        // Non-admin tried all_orgs — revert toggle and show toast
+        $('#all-orgs').checked = false;
+        const toast = el('div', {style:'position:fixed;top:16px;right:16px;background:#e94560;color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.4)'});
+        toast.textContent = 'Admin role required for "All orgs" view';
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+      }
+    }
+  });
+
+  // --- Boot ---
+  renderIdentityBar();
+  if (!identity) {
+    showIdentityForm();
+    // Show friendly placeholders instead of loading (which would fail with ERR)
+    $('#stat-total').textContent = '—';
+    $('#stat-tags').textContent = '—';
+    $('#stat-stale').textContent = '—';
+  } else {
+    loadDashboard();
+  }
+})();
+</script>
+</body>
+</html>

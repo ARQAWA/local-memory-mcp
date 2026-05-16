@@ -1,0 +1,57 @@
+{
+  "name": "local-memory-mcp",
+  "version": "0.1.0",
+  "description": "Local-only MCP memory server based on Engram with PostgreSQL, pgvector, Web UI, and Admin UI",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "local-memory-mcp": "dist/index.js",
+    "local-memory-web": "bin/local-memory-web.sh",
+    "local-memory-postgres": "scripts/local-postgres.sh"
+  },
+  "scripts": {
+    "build": "tsc && rm -rf dist/db/migrations && cp -r src/db/migrations dist/db/migrations && cp -r public dist/public",
+    "dev:mcp": "tsx src/index.ts --stdio",
+    "dev:web": "tsx src/index.ts --web",
+    "start": "node dist/index.js --stdio",
+    "web": "node dist/index.js --web",
+    "migrate": "tsx src/db/migrate.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "format": "prettier --write 'src/**/*.ts' 'tests/**/*.ts'",
+    "format:check": "prettier --check 'src/**/*.ts' 'tests/**/*.ts'"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "express": "^5.2.1",
+    "helmet": "^8.1.0",
+    "lru-cache": "^11.3.6",
+    "postgres": "^3.4.9",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.3",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.13.4",
+    "eslint": "^9.0.0",
+    "prettier": "^3.8.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.59.2",
+    "vitest": "^4.1.4"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "packageManager": "pnpm@10.30.3",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ],
+    "overrides": {
+      "@hono/node-server": ">=1.19.10",
+      "hono": ">=4.12.4",
+      "fast-xml-parser": ">=5.3.8"
+    }
+  }
+}
