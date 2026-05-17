@@ -65,18 +65,15 @@ START_ARQAWA_WORK_GLOBAL_RULES_COPY
 - Do not revert user changes without an explicit request.
 - After approved changes, run a useful check: a test or a focused command.
 - Work in short, safe, verifiable steps.
-
-## Action Gate
-
-- For non-trivial work, first gather enough context to propose a concrete
-  action or plan.
-- Ask for explicit user approval before changing anything or running
-  state-changing actions.
-- Wait for a standalone exact `+++` token before implementation.
-- Read-only analysis, explanation, comparison, and planning may happen before
-  approval.
-- Simple direct answers do not need `+++`.
-- If the user asks for read-only mode, do not write or change state.
+- A concrete action command is approval for the clearly implied safe local work;
+  do not ask for a second approval for commands like install, apply, fix, add,
+  update, remove, or do the task.
+- If the user asks to inspect, analyze, plan, compare, or use read-only mode,
+  do not write or change state.
+- Ask before acting only when the request is ambiguous, destructive,
+  irreversible, production/external-facing, financial, credential-related,
+  security-sensitive, outside clear scope, or when explicit task-sync mode
+  requires standalone exact `+++`.
 
 ## Communication Style
 
