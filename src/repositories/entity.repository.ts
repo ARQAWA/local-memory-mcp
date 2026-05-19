@@ -191,9 +191,17 @@ export class EntityRepository {
     const pattern = `%${query.replace(/[%_\\]/g, "\\$&")}%`;
     const typeFilter = entityType ? sql`AND e.entity_type = ${entityType}` : sql``;
     return sql<EntityWithMemoryCount[]>`
-      WITH counts AS (
+      WITH matched AS MATERIALIZED (
+        SELECT e.*
+        FROM entities e
+        WHERE e.repository_id = ${repositoryId}
+          AND e.name ILIKE ${pattern} ESCAPE '\\'
+          ${typeFilter}
+      ),
+      counts AS (
         SELECT me.entity_id, COUNT(*)::int AS memory_count
         FROM memory_entities me
+        JOIN matched e ON e.id = me.entity_id
         JOIN memories m ON m.id = me.memory_id
          AND m.repository_id = ${repositoryId}
          AND m.deleted_at IS NULL
@@ -202,13 +210,10 @@ export class EntityRepository {
         WHERE me.repository_id = ${repositoryId}
         GROUP BY me.entity_id
       )
-      SELECT e.*,
+      SELECT matched.*,
         COALESCE(c.memory_count, 0)::int AS memory_count
-      FROM entities e
-      LEFT JOIN counts c ON c.entity_id = e.id
-      WHERE e.repository_id = ${repositoryId}
-        AND e.name ILIKE ${pattern} ESCAPE '\\'
-        ${typeFilter}
+      FROM matched
+      LEFT JOIN counts c ON c.entity_id = matched.id
       ORDER BY memory_count DESC
       LIMIT ${limit}
     `;

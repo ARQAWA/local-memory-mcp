@@ -8,8 +8,10 @@ import { performance } from "node:perf_hooks";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
 const migrationsDir = join(root, "src", "db", "migrations");
-const baseUrl = process.env["LOCAL_MEMORY_DATABASE_URL"] ?? "postgres://local_memory:local_memory@127.0.0.1:55432/local_memory";
-const reportPath = process.env["LOCAL_MEMORY_PERF_REPORT"] ?? join("/tmp", `local-memory-search-proof-${Date.now()}.md`);
+const baseUrl =
+  process.env["LOCAL_MEMORY_DATABASE_URL"] ?? "postgres://local_memory:local_memory@127.0.0.1:55432/local_memory";
+const reportPath =
+  process.env["LOCAL_MEMORY_PERF_REPORT"] ?? join("/tmp", `local-memory-search-proof-${Date.now()}.md`);
 
 const repoSizes = [
   { slug: "perf_small", count: Number(process.env["LOCAL_MEMORY_PERF_SMALL"] ?? 100) },
@@ -19,7 +21,10 @@ const repoSizes = [
 ] as const;
 
 function dbName(): string {
-  return `local_memory_perf_${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}`;
+  return `local_memory_perf_${new Date()
+    .toISOString()
+    .replace(/[-:.TZ]/g, "")
+    .slice(0, 14)}`;
 }
 
 function quoteIdent(value: string): string {
@@ -77,13 +82,32 @@ async function applyMigrations(sql: postgres.Sql): Promise<void> {
   for (const file of files) {
     const content = readFileSync(join(migrationsDir, file), "utf-8");
     const stripped = content.replace(/^\s*BEGIN\s*;/im, "").replace(/\s*COMMIT\s*;\s*$/im, "");
-    await sql.unsafe(stripped);
-    await sql`INSERT INTO _migrations (name) VALUES (${file}) ON CONFLICT (name) DO NOTHING`;
+    if (content.includes("@no-transaction")) {
+      const executable = stripped
+        .split("\n")
+        .filter((line) => !line.trim().startsWith("--"))
+        .join("\n");
+      const statements = executable
+        .split(/;\s*\n/)
+        .map((statement) => statement.trim())
+        .filter((statement) => statement.length > 0);
+      for (const statement of statements) {
+        await sql.unsafe(statement);
+      }
+      await sql`INSERT INTO _migrations (name) VALUES (${file}) ON CONFLICT (name) DO NOTHING`;
+      continue;
+    }
+    await sql.begin(async (tx) => {
+      await tx.unsafe(stripped);
+      await tx`INSERT INTO _migrations (name) VALUES (${file}) ON CONFLICT (name) DO NOTHING`;
+    });
   }
 }
 
 async function seedRepo(sql: postgres.Sql, slug: string, count: number): Promise<number> {
   const started = performance.now();
+  const entityCount = Math.min(Math.max(100, Math.floor(count / 10)), 10_000);
+  const linkedMemoryCount = Math.min(count, entityCount * 4);
   const [repo] = await sql<{ id: string }[]>`
     INSERT INTO repositories (slug, name, root_path, root_hash, metadata)
     VALUES (
@@ -127,8 +151,14 @@ async function seedRepo(sql: postgres.Sql, slug: string, count: number): Promise
 
   await sql.unsafe(`
     INSERT INTO entities (repository_id, name, entity_type)
-    SELECT '${repo.id}'::uuid, 'api_' || gs::text, 'api'
-    FROM generate_series(1, 50) AS gs
+    SELECT
+      '${repo.id}'::uuid,
+      CASE
+        WHEN gs % 97 = 0 THEN 'rare_entity_${slug}_' || gs::text
+        ELSE 'common_entity_${slug}_' || gs::text
+      END,
+      (ARRAY['service','file','package','person','concept','api','error','env_var'])[(gs % 8) + 1]
+    FROM generate_series(1, ${entityCount}) AS gs
   `);
 
   await sql.unsafe(`
@@ -136,7 +166,7 @@ async function seedRepo(sql: postgres.Sql, slug: string, count: number): Promise
       SELECT id, repository_id, row_number() OVER (ORDER BY updated_at DESC) AS rn
       FROM memories
       WHERE repository_id = '${repo.id}'::uuid
-      LIMIT 1000
+      LIMIT ${linkedMemoryCount}
     ),
     ent AS (
       SELECT id, row_number() OVER (ORDER BY name) AS rn
@@ -146,13 +176,17 @@ async function seedRepo(sql: postgres.Sql, slug: string, count: number): Promise
     INSERT INTO memory_entities (memory_id, repository_id, entity_id, relevance)
     SELECT mem.id, mem.repository_id, ent.id, 1.0
     FROM mem
-    JOIN ent ON ((mem.rn - 1) % 50) = (ent.rn - 1)
+    JOIN ent ON ((mem.rn - 1) % ${entityCount}) = (ent.rn - 1)
   `);
 
   return performance.now() - started;
 }
 
-async function explain(sql: postgres.Sql, title: string, query: string): Promise<{ title: string; timeMs: number; plan: string }> {
+async function explain(
+  sql: postgres.Sql,
+  title: string,
+  query: string,
+): Promise<{ title: string; timeMs: number; plan: string }> {
   const started = performance.now();
   const rows = await sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS) ${query}`);
   const elapsed = performance.now() - started;
@@ -166,7 +200,40 @@ function executionTime(plan: string): string {
 
 function planHeadline(plan: string): string {
   const lines = plan.split("\n").filter((line) => /Scan|Sort|Limit|Bitmap|Index/.test(line));
-  return lines.slice(0, 4).map((line) => line.trim()).join("; ");
+  return lines
+    .slice(0, 4)
+    .map((line) => line.trim())
+    .join("; ");
+}
+
+function entitySearchQuery(repoSlug: string, pattern: string): string {
+  return `WITH repo AS (
+           SELECT id FROM repositories WHERE slug='${repoSlug}'
+         ),
+         matched AS MATERIALIZED (
+           SELECT e.*
+           FROM entities e
+           WHERE e.repository_id = (SELECT id FROM repo)
+             AND e.name ILIKE '${pattern}' ESCAPE '\\'
+         ),
+         counts AS (
+           SELECT me.entity_id, COUNT(*)::int AS memory_count
+           FROM memory_entities me
+           JOIN matched e ON e.id = me.entity_id
+           JOIN memories m
+             ON m.id = me.memory_id
+            AND m.repository_id = (SELECT id FROM repo)
+            AND m.deleted_at IS NULL
+            AND m.valid_until IS NULL
+            AND (m.expires_at IS NULL OR m.expires_at > now())
+           WHERE me.repository_id = (SELECT id FROM repo)
+           GROUP BY me.entity_id
+         )
+         SELECT matched.id, matched.name, COALESCE(counts.memory_count, 0)::int AS memory_count
+         FROM matched
+         LEFT JOIN counts ON counts.entity_id = matched.id
+         ORDER BY memory_count DESC
+         LIMIT 20`;
 }
 
 async function main(): Promise<void> {
@@ -204,6 +271,8 @@ async function main(): Promise<void> {
     await sql`ANALYZE repositories`;
     await sql`ANALYZE memories`;
     await sql`ANALYZE memory_tags`;
+    await sql`ANALYZE entities`;
+    await sql`ANALYZE memory_entities`;
     report.push(`Analyze time: \`${(performance.now() - analyzeStart).toFixed(0)} ms\``, "");
 
     const [sizes] = await sql<{ table_size: string; total_size: string; hnsw_size: string }[]>`
@@ -292,6 +361,10 @@ async function main(): Promise<void> {
            JOIN memories m ON m.id = ranked.id AND m.repository_id = ranked.repository_id`,
         ),
       );
+      plans.push(
+        await explain(sql, `${repo.slug}: entity search common`, entitySearchQuery(repo.slug, "%common_entity%")),
+      );
+      plans.push(await explain(sql, `${repo.slug}: entity search rare`, entitySearchQuery(repo.slug, "%rare_entity%")));
     }
     plans.push(
       await explain(
@@ -306,7 +379,9 @@ async function main(): Promise<void> {
 
     report.push("## Summary", "", "| Query | Wall time | DB execution | Plan headline |", "|---|---:|---:|---|");
     for (const plan of plans) {
-      report.push(`| ${plan.title} | ${plan.timeMs.toFixed(0)} ms | ${executionTime(plan.plan)} | ${planHeadline(plan.plan)} |`);
+      report.push(
+        `| ${plan.title} | ${plan.timeMs.toFixed(0)} ms | ${executionTime(plan.plan)} | ${planHeadline(plan.plan)} |`,
+      );
     }
 
     report.push("", "## Plans", "");

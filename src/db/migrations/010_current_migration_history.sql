@@ -7,5 +7,6 @@ WHERE name NOT IN (
   '006_repository_identity_hardening.sql',
   '007_repository_metadata_object_hardening.sql',
   '009_drop_redundant_repository_constraints.sql',
-  '010_current_migration_history.sql'
+  '010_current_migration_history.sql',
+  '011_entities_repository_trgm.sql'
 );

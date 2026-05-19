@@ -221,8 +221,8 @@ CREATE INDEX IF NOT EXISTS idx_memory_entities_repository_memory
 CREATE INDEX IF NOT EXISTS idx_entities_repository_name
   ON entities (repository_id, name);
 
-CREATE INDEX IF NOT EXISTS idx_entities_name_trgm
-  ON entities USING GIN (name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_entities_repository_name_trgm
+  ON entities USING GIN (repository_id uuid_ops, name gin_trgm_ops);
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_repository_memory_created
   ON audit_log (repository_id, memory_id, created_at DESC);

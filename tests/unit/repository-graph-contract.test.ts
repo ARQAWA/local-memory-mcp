@@ -64,6 +64,23 @@ describe("repository graph contract", () => {
     expect(repo).toContain("ORDER BY m.embedding <=>");
   });
 
+  test("entity search uses repository-aware trigram and counts only matched entities", () => {
+    const repo = readProjectFile("src/repositories/entity.repository.ts");
+    const schema = readProjectFile("src/db/migrations/001_repository_schema.sql");
+    const migration = readProjectFile("src/db/migrations/011_entities_repository_trgm.sql");
+    const proof = readProjectFile("scripts/search-performance-proof.ts");
+
+    expect(repo).toContain("WITH matched AS MATERIALIZED");
+    expect(repo).toContain("JOIN matched e ON e.id = me.entity_id");
+    expect(schema).toContain("idx_entities_repository_name_trgm");
+    expect(schema).toContain("repository_id uuid_ops, name gin_trgm_ops");
+    expect(schema).not.toContain("idx_entities_name_trgm");
+    expect(migration).toContain("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_entities_repository_name_trgm");
+    expect(migration).toContain("DROP INDEX CONCURRENTLY IF EXISTS idx_entities_name_trgm");
+    expect(proof).toContain("entity search common");
+    expect(proof).toContain("entity search rare");
+  });
+
   test("hardening migration adds repo constraints and graph metadata", () => {
     const migration = readProjectFile("src/db/migrations/005_repository_graph_hardening.sql");
 
