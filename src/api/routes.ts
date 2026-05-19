@@ -1,112 +1,68 @@
 import type { Express } from "express";
 import { z } from "zod";
-import type { MemoryService } from "../services/memory.service.js";
-import { MemoryTypeSchema, MemoryScopeSchema } from "../types/memory.js";
-import { getRequestContextOrDefault } from "../context.js";
+import { getRequestContext } from "../context.js";
+import { EngramError, ValidationError } from "../errors.js";
 import { logger } from "../services/logger.js";
-import { EngramError } from "../errors.js";
+import type { MemoryService } from "../services/memory.service.js";
+import { MemoryTypeSchema, RelatedModeSchema, RepositorySelectorSchema } from "../types/memory.js";
 
-// --- API request schemas ---
+const ListMemoriesQuery = RepositorySelectorSchema.extend({
+  memory_type: MemoryTypeSchema.optional(),
+  tags: z.string().optional(),
+  since: z.iso.datetime({ offset: true }).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  offset: z.coerce.number().int().min(0).default(0),
+}).strict();
 
-const ListMemoriesQuery = z
-  .object({
-    all_orgs: z.enum(["true", "false"]).optional(),
-    scope: MemoryScopeSchema.optional(),
-    memory_type: MemoryTypeSchema.optional(),
-    tags: z.string().optional(),
-    team_slug: z.string().min(1).max(100).optional(),
-    since: z.iso.datetime({ offset: true }).optional(),
-    limit: z.coerce.number().int().min(1).max(100).default(20),
-    offset: z.coerce.number().int().min(0).default(0),
-  })
-  .strict();
+const SearchMemoriesQuery = RepositorySelectorSchema.extend({
+  q: z.string().min(1).max(10_000),
+  memory_type: MemoryTypeSchema.optional(),
+  tags: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  offset: z.coerce.number().int().min(0).default(0),
+}).strict();
 
-const SearchMemoriesQuery = z
-  .object({
-    q: z.string().min(1).max(10_000),
-    all_orgs: z.enum(["true", "false"]).optional(),
-    scope: MemoryScopeSchema.optional(),
-    memory_type: MemoryTypeSchema.optional(),
-    tags: z.string().optional(),
-    team_slug: z.string().min(1).max(100).optional(),
-    limit: z.coerce.number().int().min(1).max(100).default(20),
-    offset: z.coerce.number().int().min(0).default(0),
-  })
-  .strict();
+const IdParam = z.object({ id: z.uuid() }).strict();
+const IdQuery = RepositorySelectorSchema;
+const RelationsQuery = RepositorySelectorSchema.extend({
+  mode: RelatedModeSchema.default("active"),
+}).strict();
+const StatsQuery = RepositorySelectorSchema;
+const RecentQuery = RepositorySelectorSchema.extend({
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+}).strict();
 
-const IdParam = z
-  .object({
-    id: z.uuid(),
-  })
-  .strict();
-
-const SlugParam = z
-  .object({
-    slug: z.string().min(1).max(100),
-  })
-  .strict();
-
-const StatsQuery = z
-  .object({
-    all_orgs: z.enum(["true", "false"]).optional(),
-    team_slug: z.string().min(1).max(100).optional(),
-  })
-  .strict();
-
-const RecentQuery = z
-  .object({
-    team_slug: z.string().min(1).max(100).optional(),
-    limit: z.coerce.number().int().min(1).max(100).default(20),
-  })
-  .strict();
-
-/**
- * Register REST API routes for the web UI.
- * These are simple JSON endpoints that delegate to MemoryService.
- */
 export function registerApiRoutes(app: Express, service: MemoryService): void {
-  // --- List memories ---
+  app.get("/api/repositories", async (_req, res) => {
+    try {
+      res.json(await service.listRepositories());
+    } catch (err: unknown) {
+      handleApiError(err, "GET /api/repositories", res);
+    }
+  });
+
   app.get("/api/memories", async (req, res) => {
     try {
       const query = ListMemoriesQuery.parse(req.query);
-      const ctx = getRequestContextOrDefault();
-      if (query.all_orgs === "true" && ctx.role !== "admin") {
-        res.status(403).json({ error: "Admin access required for all_orgs" });
-        return;
-      }
-      const memories = await service.listMemories({
-        org_id: query.all_orgs === "true" ? undefined : ctx.org_id,
-        scope: query.scope,
-        memory_type: query.memory_type,
-        tags: parseTags(query.tags),
-        team_slug: query.team_slug,
-        since: query.since,
-        limit: query.limit,
-        offset: query.offset,
-      });
+      assertCurrentRepositoryAvailable(query.repository_mode);
+      const memories = await service.listMemories({ ...query, tags: parseTags(query.tags) });
       res.json(memories);
     } catch (err: unknown) {
       handleApiError(err, "GET /api/memories", res);
     }
   });
 
-  // --- Search memories (must be before /:id to avoid route conflict) ---
   app.get("/api/memories/search", async (req, res) => {
     try {
       const query = SearchMemoriesQuery.parse(req.query);
-      const ctx = getRequestContextOrDefault();
-      if (query.all_orgs === "true" && ctx.role !== "admin") {
-        res.status(403).json({ error: "Admin access required for all_orgs" });
-        return;
-      }
+      assertCurrentRepositoryAvailable(query.repository_mode);
       const fetchLimit = Math.min(query.limit + query.offset, 500);
       const results = await service.searchMemories({
         query: query.q,
-        org_id: query.all_orgs === "true" ? undefined : ctx.org_id,
-        scope: query.scope,
+        repository_mode: query.repository_mode,
+        repository: query.repository,
         memory_type: query.memory_type,
         tags: parseTags(query.tags),
-        team_slug: query.team_slug,
         limit: fetchLimit,
       });
       res.json(results.slice(query.offset, query.offset + query.limit));
@@ -115,17 +71,13 @@ export function registerApiRoutes(app: Express, service: MemoryService): void {
     }
   });
 
-  // --- Get single memory ---
   app.get("/api/memories/:id", async (req, res) => {
     try {
       const { id } = IdParam.parse(req.params);
-      const ctx = getRequestContextOrDefault();
-      const allOrgs = req.query["all_orgs"] === "true";
-      if (allOrgs && ctx.role !== "admin") {
-        res.status(403).json({ error: "Admin access required for all_orgs" });
-        return;
-      }
-      const memory = await service.getMemory(id, allOrgs ? undefined : ctx.org_id);
+      const query = IdQuery.parse(req.query);
+      assertCurrentRepositoryAvailable(query.repository_mode);
+      const resolved = await service.resolveRepository(query);
+      const memory = await service.getMemory(id, resolved.repository_id, { includeInvalidated: false });
       if (!memory) {
         res.status(404).json({ error: "Memory not found" });
         return;
@@ -136,119 +88,96 @@ export function registerApiRoutes(app: Express, service: MemoryService): void {
     }
   });
 
-  // --- Memory stats ---
   app.get("/api/stats", async (req, res) => {
     try {
       const query = StatsQuery.parse(req.query);
-      const ctx = getRequestContextOrDefault();
-      if (query.all_orgs === "true" && ctx.role !== "admin") {
-        res.status(403).json({ error: "Admin access required for all_orgs" });
-        return;
-      }
-      const stats = await service.getMemoryStats(query.all_orgs === "true" ? undefined : ctx.org_id, query.team_slug);
-      res.json(stats);
+      assertCurrentRepositoryAvailable(query.repository_mode);
+      res.json(await service.getMemoryStats(query));
     } catch (err: unknown) {
       handleApiError(err, "GET /api/stats", res);
     }
   });
 
-  // --- List teams ---
-  app.get("/api/teams", async (_req, res) => {
+  app.get("/api/tags", async (req, res) => {
     try {
-      const ctx = getRequestContextOrDefault();
-      const teams = await service.listTeams(ctx.org_id);
-      res.json(teams);
-    } catch (err: unknown) {
-      handleApiError(err, "GET /api/teams", res);
-    }
-  });
-
-  // --- Team overview ---
-  app.get("/api/teams/:slug", async (req, res) => {
-    try {
-      const { slug } = SlugParam.parse(req.params);
-      const ctx = getRequestContextOrDefault();
-      const overview = await service.getTeamOverview(slug, ctx.org_id);
-      if (!overview) {
-        res.status(404).json({ error: "Team not found" });
-        return;
-      }
-      res.json(overview);
-    } catch (err: unknown) {
-      handleApiError(err, "GET /api/teams/:slug", res);
-    }
-  });
-
-  // --- List tags ---
-  app.get("/api/tags", async (_req, res) => {
-    try {
-      const ctx = getRequestContextOrDefault();
-      const tags = await service.getAllTags(ctx.org_id);
-      res.json(tags);
+      const query = StatsQuery.parse(req.query);
+      assertCurrentRepositoryAvailable(query.repository_mode);
+      res.json(await service.getAllTags(query));
     } catch (err: unknown) {
       handleApiError(err, "GET /api/tags", res);
     }
   });
 
-  // --- Get relations for a memory ---
   app.get("/api/relations/:id", async (req, res) => {
     try {
       const { id } = IdParam.parse(req.params);
-      const ctx = getRequestContextOrDefault();
-      const allOrgs = req.query["all_orgs"] === "true";
-      if (allOrgs && ctx.role !== "admin") {
-        res.status(403).json({ error: "Admin access required for all_orgs" });
+      const query = RelationsQuery.parse(req.query);
+      assertCurrentRepositoryAvailable(query.repository_mode);
+      const resolved = await service.resolveRepository(query);
+      const memory = await service.getMemory(id, resolved.repository_id, {
+        includeInvalidated: query.mode !== "active",
+      });
+      if (!memory) {
+        res.status(404).json({ error: "Memory not found" });
         return;
       }
-      const relations = await service.getRelated(id, allOrgs ? undefined : ctx.org_id);
-      res.json(relations);
+      res.json(await service.getRelated(id, resolved.repository_id ?? memory.repository_id, { mode: query.mode }));
     } catch (err: unknown) {
       handleApiError(err, "GET /api/relations/:id", res);
     }
   });
 
-  // --- Recent audit log ---
   app.get("/api/recent", async (req, res) => {
     try {
       const query = RecentQuery.parse(req.query);
-      const ctx = getRequestContextOrDefault();
-      const recent = await service.getRecentChanges(query.team_slug, query.limit, ctx.org_id);
-      res.json(recent);
+      assertCurrentRepositoryAvailable(query.repository_mode);
+      res.json(await service.getRecentChanges(query.limit, query));
     } catch (err: unknown) {
       handleApiError(err, "GET /api/recent", res);
     }
   });
 
-  logger.info("API routes registered: /api/memories, /api/stats, /api/teams, /api/tags, /api/relations, /api/recent");
-}
+  app.get("/api/context", async (_req, res) => {
+    try {
+      const ctx = getRequestContext();
+      if (!ctx) {
+        res.json({ current_repository: null, identity: null });
+        return;
+      }
+      const repository = await service.currentRepository();
+      res.json({ current_repository: repository, identity: { user_id: ctx.user_id, role: ctx.role } });
+    } catch (err: unknown) {
+      handleApiError(err, "GET /api/context", res);
+    }
+  });
 
-// --- Helpers ---
+  logger.info("API routes registered");
+}
 
 function parseTags(val: string | undefined): string[] | undefined {
   if (!val?.trim()) return undefined;
   return val
     .split(",")
-    .map((t) => t.trim())
+    .map((tag) => tag.trim())
     .filter(Boolean);
+}
+
+function assertCurrentRepositoryAvailable(repositoryMode: string): void {
+  if (repositoryMode === "current" && !getRequestContext()) {
+    throw new ValidationError("current repository is unavailable in Web/API mode; use repository_mode=all or specific");
+  }
 }
 
 function handleApiError(err: unknown, route: string, res: import("express").Response): void {
   if (res.headersSent) return;
   if (err instanceof z.ZodError) {
-    const issues = err.issues.map((i) => ({
-      path: i.path.join("."),
-      message: i.message,
-    }));
-    logger.warn(`API validation error: ${route}`, { issues });
-    res.status(400).json({ error: "Validation error", details: issues });
+    res.status(400).json({ error: "Validation error", details: err.issues });
     return;
   }
   if (err instanceof EngramError) {
-    logger.warn(`API error: ${route}`, { error: err.message, code: err.code });
     res.status(err.statusCode).json({ error: err.message, code: err.code });
     return;
   }
-  const errMsg = err instanceof Error ? err.message : String(err);
-  logger.error(`API error: ${route}`, { error: errMsg });
+  logger.error(`API error: ${route}`, { error: err instanceof Error ? err.message : String(err) });
   res.status(500).json({ error: "Internal server error" });
 }

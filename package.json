@@ -10,12 +10,13 @@
     "local-memory-postgres": "scripts/local-postgres.sh"
   },
   "scripts": {
-    "build": "tsc && rm -rf dist/db/migrations dist/public && cp -r src/db/migrations dist/db/migrations && cp -r public dist/public",
+    "build": "rm -rf dist tsconfig.tsbuildinfo && tsc --incremental false && mkdir -p dist/db && cp -r src/db/migrations dist/db/migrations && cp -r public dist/public",
     "dev:mcp": "tsx src/index.ts --stdio",
     "dev:web": "tsx src/index.ts --web",
     "start": "node dist/index.js --stdio",
     "web": "node dist/index.js --web",
     "migrate": "tsx src/db/migrate.ts",
+    "proof:search": "tsx scripts/search-performance-proof.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "format": "prettier --write 'src/**/*.ts' 'tests/**/*.ts'",

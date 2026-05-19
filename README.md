@@ -2,181 +2,143 @@
 
 Local-only MCP memory server for AI coding agents.
 
-It gives different agents on the same machine one shared durable memory:
+## Model
 
-- one user-level app install;
-- one local PostgreSQL database;
-- one `pgvector` vector index;
-- one MCP command;
-- one local Web/Admin viewer;
-- host-specific agent rules only.
+- One machine has one Local Memory MCP install.
+- One machine has one local PostgreSQL database.
+- Memory is stored globally on the host.
+- Every memory belongs to exactly one repository.
+- Normal reads and writes use the current project.
+- A project can be a Git repository or a plain local folder.
+- If a plain folder later becomes a Git repository, it keeps the same memory
+  because identity is rooted in the canonical project path.
+- Cross-repository reads are explicit: use `repository_mode=specific` or
+  `repository_mode=all`.
+- The Web UI is a global viewer. If it is started outside a project folder, it
+  shows all repositories by default and does not invent a current repo.
 
-There is no cloud sync, no remote HTTP MCP endpoint, no Qdrant, no SQLite mode,
-and no local `.env` contract. Runtime settings come from the global system
-environment.
-
-Default embeddings use OpenRouter with `openai/text-embedding-3-small` and
-`256` dimensions.
+There is no per-agent database, per-repository database, or legacy identity
+compatibility layer.
 
 Default local URLs:
 
 - Web UI: `http://127.0.0.1:13765/ui`
 - Admin UI: `http://127.0.0.1:13765/admin`
 
-## Install Prompts
+The Web UI keeps the full viewer shell:
 
-This repo contains two separate prompts.
+- `Dashboard`
+- `Memories`
+- `Search`
+- `Graph`
 
-| Prompt | Purpose |
-|---|---|
-| `INSTALL_AGENT_PROMPT.md` | Install Local Memory MCP and Local Memory usage rules. |
-| `INSTALL_ARQAWA_WORK_GLOBAL_PROMPT.md` | Install ARQAWA global work rules only. |
+The Web UI is repository-first. It defaults to all repositories because the Web
+server has no current project context. Selecting one repository switches reads
+to `repository_mode=specific`.
 
-They are intentionally separate.
+Repository identity rows are hardened:
 
-`INSTALL_AGENT_PROMPT.md` does not install ARQAWA work rules.
-`INSTALL_ARQAWA_WORK_GLOBAL_PROMPT.md` does not install Local Memory MCP.
+- `root_path` is required;
+- `root_hash` cannot use old placeholder values;
+- repository metadata must be a JSON object;
+- old migration metadata is rejected;
+- existing placeholder rows are normalized before hardening migrations run.
 
-## Shared Memory Model
+Search is repository-correct:
 
-Local Memory MCP is designed for many agents and many repositories.
+- current/specific semantic search uses an exact per-repository candidate scan;
+- explicit all-repository semantic search can use the global HNSW index;
+- FTS, tags, entities, relations, and list reads keep repository-keyed indexes.
 
-The app is installed once under:
+The Admin UI keeps:
 
-```text
-$HOME/.local/share/local-memory-mcp/app
-```
+- `Dashboard`
+- `All Memories`
+- period selector
+- repository chart
+- memory table pagination
+- memory detail modal
 
-The database is shared across agents:
+## Tools
 
-```text
-postgres://local_memory:local_memory@127.0.0.1:55432/local_memory
-```
+Core read tools:
 
-Each agent host configures its own MCP connection and global instructions, but
-all of them point to the same local MCP command:
+- `get_active_context`
+- `recall`
+- `get_context_for`
+- `get_memory`
+- `list_memories`
+- `search_memories`
+- `get_memory_stats`
+- `get_repository_overview`
+- `list_repositories`
 
-```text
-$HOME/.local/bin/local-memory-mcp
-```
+Core write tools:
 
-This means Codex, Claude Code, Cursor, VS Code/GitHub Copilot, and other MCP
-clients can all use the same durable memory when configured on the same
-machine.
+- `remember`
+- `remember_fact`
+- `remember_decision`
+- `correct`
+- `forget`
+- `batch_forget`
+- `set_session_context`
+- `digest_session`
 
-## Local Memory Agent Contract
+Maintenance and repair:
 
-Agents should treat Local Memory MCP as durable local working memory.
-
-The rule is:
-
-```text
-memory-first, but smallest useful memory call
-```
-
-Use memory when it helps the task. Do not call tools just to call tools.
-Do not write low-value noise.
-
-### Startup
-
-At the start of a non-trivial task:
-
-- call `get_active_context` with what you are working on;
-- call `set_session_context` when the task will last more than a quick answer;
-- use `recall` or `get_context_for` before planning or editing.
-
-### Reads
-
-| Situation | Preferred tools |
-|---|---|
-| General context | `get_active_context`, `recall` |
-| Topic or file context | `get_context_for` |
-| Several topics | `batch_recall` |
-| Exact known memory | `get_memory` |
-| Browsing recent memory | `list_memories`, `search_memories` |
-| Related memories | `get_related`, `get_group` |
-| Stats/overview | `get_memory_stats`, `get_team_overview` |
-
-### Writes
-
-| Situation | Preferred tools |
-|---|---|
-| User says "remember", "запомни", or "save this" | `remember_fact`, `remember_decision`, or `remember` |
-| Architecture or product choice | `remember_decision` |
-| Atomic fact | `remember_fact` |
-| Useful coding lesson | `log_learning` |
-| Bug fixed | `log_resolution` |
-| End of meaningful task | `digest_session` only if durable value exists |
-
-### Maintenance
-
-| Situation | Preferred tools |
-|---|---|
-| Memory is stale or wrong | `correct` |
-| Memory is irrelevant | `forget` |
-| Many memories are irrelevant | `batch_forget` |
-| Duplicate or fragmented memories | `consolidate` |
-| Relationship is important | `link_memories` |
-| Need reusable always-on note | `update_memory_block` |
-| Need conventions | `sync_conventions`, `export_conventions` |
-| Need import/export | `import_markdown`, `export_markdown` |
-
-### Admin And Repair
-
-Use admin tools carefully:
-
-- `set_memory_policy`
+- `consolidate`
+- `link_memories`
+- `get_related`
+- `get_group`
+- `update_memory_block`
+- `get_memory_blocks`
+- `delete_memory_block`
+- `sync_conventions`
+- `export_conventions`
+- `import_markdown`
+- `export_markdown`
 - `query_entities`
 - `detect_conflicts`
 - `purge_memories`
 - `reembed_memories`
 - `get_memory_analytics`
-- `get_similar_errors`
 
-`reembed_memories` is for model or dimension changes, or for backfilling
-missing embeddings. Normal writes do not need manual reindexing.
+## Agent Contract
 
-### Conflict Rules
+Use memory when it helps the task.
 
-- Current user instruction wins over old memory.
-- Current repo files win over old memory.
-- If memory conflicts with current facts, use `correct`.
-- Never store secrets, tokens, private keys, passwords, or credentials.
-- Prefer small durable facts over long chat transcripts.
+At the start of non-trivial work:
 
-## Host Rules
+- call `get_active_context`;
+- call `recall` or `get_context_for` before important planning or edits;
+- call `set_session_context` only when the task context is worth saving.
 
-The install prompt is universal. The current agent must detect its host and
-install the Local Memory managed instruction block in that host's global
-rules/instructions location.
+When the user says "remember", "запомни", or "зафиксируй", write memory
+immediately.
 
-Known examples:
+Current user instructions and current repository files beat old memory. If a
+memory is stale, use `correct`. If it is irrelevant, use `forget`.
 
-| Host | MCP config target | Instruction target |
-|---|---|---|
-| Codex | `~/.codex/config.toml` | `~/.codex/AGENTS.md` |
-| Claude Code | `claude mcp add --scope user ...` | user/global Claude Code instructions |
-| Cursor | global/user MCP config when supported | Cursor User Rules |
-| VS Code / Copilot | user profile `mcp.json` | user/custom instructions or repo instructions |
-| Generic MCP client | its global MCP config | its global instruction/rules store |
+Use graph links only for strong durable relationships. `link_memories` is for
+explicit current-repository edges, not for shared tags, shared files, or vague
+similarity. Use `get_related` for lineage, dependencies, alternatives, and
+conflicts. Use `query_entities` for file/API/package/error/env discovery.
+Normal recall stays token-efficient; full graph context is opt-in.
 
-If the host cannot be detected safely, the installing agent should install the
-MCP app and write the canonical Local Memory Agent Contract to the app
-directory, then report the exact manual host-specific step.
+Never store secrets, tokens, passwords, private keys, credentials, or private
+auth material.
 
-## Drift Closure
+## Install And Migration
 
-Managed instruction blocks are canonical.
+Use `INSTALL_AGENT_PROMPT.md` for a fresh install or legacy migration.
 
-If an older Local Memory managed block exists, replace the whole block with the
-current version from this repo.
+The installer must:
 
-Do not merge old conflicting text.
-Do not edit unrelated user rules outside the managed block.
-
-## Sources
-
-- [Claude Code MCP docs](https://docs.claude.com/en/docs/claude-code/mcp)
-- [Cursor rules docs](https://docs.cursor.com/en/context)
-- [VS Code MCP configuration docs](https://code.visualstudio.com/docs/copilot/reference/mcp-configuration)
-- [GitHub Copilot custom instructions docs](https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions)
+- clean stale `dist` output before build;
+- run migrations;
+- restart the active local Web server;
+- verify `/api/repositories`;
+- verify `repository_mode=all`;
+- verify `/ui/` has `Dashboard`, `Memories`, `Search`, and `Graph`;
+- verify `/admin` has `Dashboard` and `All Memories`;
+- verify a fresh MCP session exposes only repository-first fields.

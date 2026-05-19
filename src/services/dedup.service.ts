@@ -22,7 +22,7 @@ export class DedupService {
     embedding: number[] | null,
     content: string,
     threshold: number = DEFAULT_SIMILARITY_THRESHOLD,
-    scope?: { org_id?: string; team_id?: string | null },
+    repositoryId?: string,
     excludeId?: string,
   ): Promise<DedupResult> {
     // If no embedding, can't do similarity search — treat as novel
@@ -30,7 +30,7 @@ export class DedupService {
       return { action: "create" };
     }
 
-    const similar = await this.memories.findSimilar(embedding, threshold, 3, scope, excludeId);
+    const similar = await this.memories.findSimilar(embedding, threshold, 3, repositoryId, excludeId);
 
     if (similar.length === 0) {
       return { action: "create" };

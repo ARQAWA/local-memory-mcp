@@ -1,14 +1,18 @@
 import { getDb } from "../db/connection.js";
-import type { SqlProvider } from "./memory.repository.js";
-import type { RelationType } from "../types/memory.js";
 import { DatabaseError, dbQuery } from "../errors.js";
+import type { RelationType } from "../types/memory.js";
+import type { SqlProvider } from "./memory.repository.js";
 
 export interface EntryRelation {
   id: string;
+  repository_id: string;
   source_id: string;
   target_id: string;
   relation_type: RelationType;
   description: string | null;
+  origin: string;
+  confidence: number;
+  metadata: Record<string, string | number | boolean | null>;
   created_at: Date;
 }
 
@@ -30,38 +34,59 @@ export class RelationRepository {
     return new RelationRepository(sqlProvider);
   }
 
-  async create(
-    data: {
-      source_id: string;
-      target_id: string;
-      relation_type: RelationType;
-      description?: string | undefined;
-    },
-    orgId?: string,
-  ): Promise<EntryRelation> {
+  async create(data: {
+    repository_id: string;
+    source_id: string;
+    target_id: string;
+    relation_type: RelationType;
+    description?: string | undefined;
+    origin?: "manual" | "lineage" | "derived" | undefined;
+    confidence?: number | undefined;
+    metadata?: Record<string, string | number | boolean | null> | undefined;
+    requireActiveEndpoints?: boolean | undefined;
+  }): Promise<EntryRelation> {
     return dbQuery("RelationRepository.create", async () => {
       const sql = this.getSql();
-      // Self-link guard
       if (data.source_id === data.target_id) {
         throw new DatabaseError("Cannot create relation: source and target are the same memory");
       }
-      // Verify both memories belong to the same org before creating relation
-      if (orgId) {
-        const [ownership] = await sql<{ cnt: number }[]>`
-        SELECT COUNT(*)::int AS cnt FROM memories
+      const activeFilter = data.requireActiveEndpoints === false ? sql`` : sql`AND valid_until IS NULL`;
+      const [ownership] = await sql<{ count: number }[]>`
+        SELECT COUNT(*)::int AS count
+        FROM memories
         WHERE id IN (${data.source_id}, ${data.target_id})
-          AND org_id = ${orgId}
+          AND repository_id = ${data.repository_id}
           AND deleted_at IS NULL
+          ${activeFilter}
       `;
-        if ((ownership?.cnt ?? 0) < 2) {
-          throw new DatabaseError("Cannot create relation: one or both memories do not belong to this organization");
-        }
+      if ((ownership?.count ?? 0) < 2) {
+        throw new DatabaseError("Cannot create relation: both memories must belong to the same repository");
       }
       const [row] = await sql<EntryRelation[]>`
-      INSERT INTO memory_relations (id, source_memory_id, target_memory_id, relation_type, description)
-      VALUES (gen_random_uuid(), ${data.source_id}, ${data.target_id}, ${data.relation_type}, ${data.description ?? null})
-      RETURNING id, source_memory_id AS source_id, target_memory_id AS target_id, relation_type, description, created_at
-    `;
+        INSERT INTO memory_relations (
+          id, repository_id, source_memory_id, target_memory_id, relation_type, description,
+          origin, confidence, metadata
+        )
+        VALUES (
+          gen_random_uuid(),
+          ${data.repository_id},
+          ${data.source_id},
+          ${data.target_id},
+          ${data.relation_type},
+          ${data.description ?? null},
+          ${data.origin ?? "manual"},
+          ${data.confidence ?? 1},
+          ${sql.json(data.metadata ?? {})}::jsonb
+        )
+        ON CONFLICT (repository_id, source_memory_id, target_memory_id, relation_type)
+        DO UPDATE SET
+          description = EXCLUDED.description,
+          origin = EXCLUDED.origin,
+          confidence = EXCLUDED.confidence,
+          metadata = EXCLUDED.metadata
+        RETURNING id, repository_id, source_memory_id AS source_id, target_memory_id AS target_id,
+          relation_type, description, origin, confidence, metadata, created_at
+      `;
       if (!row) throw new DatabaseError("INSERT INTO memory_relations did not return a row");
       return row;
     });
@@ -69,56 +94,86 @@ export class RelationRepository {
 
   async findByEntry(
     entryId: string,
-    orgId?: string,
-    options?: { activeOnly?: boolean },
+    repositoryId?: string,
+    options?: { activeOnly?: boolean; includeLineage?: boolean },
   ): Promise<EntryRelationWithContext[]> {
-    return dbQuery(`RelationRepository.findByEntry(${entryId})`, async () => {
-      const sql = this.getSql();
-      const orgFilter = orgId ? sql`AND src.org_id = ${orgId} AND tgt.org_id = ${orgId}` : sql``;
-      const activeFilter =
-        options?.activeOnly !== false ? sql`AND src.valid_until IS NULL AND tgt.valid_until IS NULL` : sql``;
-      return sql<EntryRelationWithContext[]>`
-      SELECT mr.id, mr.source_memory_id AS source_id, mr.target_memory_id AS target_id,
-        mr.relation_type, mr.description, mr.created_at,
-        src.summary AS source_summary, src.memory_type AS source_type,
-        tgt.summary AS target_summary, tgt.memory_type AS target_type
-      FROM memory_relations mr
-      JOIN memories src ON src.id = mr.source_memory_id
-      JOIN memories tgt ON tgt.id = mr.target_memory_id
-      WHERE (mr.source_memory_id = ${entryId} OR mr.target_memory_id = ${entryId})
-        AND src.deleted_at IS NULL AND tgt.deleted_at IS NULL
-        ${activeFilter}
-        ${orgFilter}
-      ORDER BY mr.created_at DESC
-    `;
-    });
+    return this.findByEntries([entryId], repositoryId, options);
   }
 
-  async delete(sourceId: string, targetId: string, relationType: RelationType, orgId?: string): Promise<boolean> {
+  async findByEntries(
+    entryIds: string[],
+    repositoryId?: string,
+    options?: { activeOnly?: boolean; includeLineage?: boolean },
+  ): Promise<EntryRelationWithContext[]> {
+    if (entryIds.length === 0) return [];
     const sql = this.getSql();
-    const orgCheck = orgId
-      ? sql`AND EXISTS (SELECT 1 FROM memories WHERE id = memory_relations.source_memory_id AND org_id = ${orgId})
-        AND EXISTS (SELECT 1 FROM memories WHERE id = memory_relations.target_memory_id AND org_id = ${orgId})`
-      : sql``;
+    const repositoryFilter = repositoryId ? sql`AND mr.repository_id = ${repositoryId}` : sql``;
+    const activeFilter =
+      options?.activeOnly === false
+        ? sql``
+        : options?.includeLineage
+          ? sql`AND (
+              (src.valid_until IS NULL AND tgt.valid_until IS NULL
+                AND (src.expires_at IS NULL OR src.expires_at > now())
+                AND (tgt.expires_at IS NULL OR tgt.expires_at > now()))
+              OR mr.relation_type = 'supersedes'
+            )`
+          : sql`AND src.valid_until IS NULL AND tgt.valid_until IS NULL
+              AND (src.expires_at IS NULL OR src.expires_at > now())
+              AND (tgt.expires_at IS NULL OR tgt.expires_at > now())`;
+    return sql<EntryRelationWithContext[]>`
+      WITH incidents AS (
+        SELECT mr.*
+        FROM memory_relations mr
+        WHERE mr.source_memory_id = ANY(${entryIds}) ${repositoryFilter}
+        UNION ALL
+        SELECT mr.*
+        FROM memory_relations mr
+        WHERE mr.target_memory_id = ANY(${entryIds}) ${repositoryFilter}
+      ),
+      deduped AS (
+        SELECT DISTINCT ON (id) *
+        FROM incidents
+        ORDER BY id, created_at DESC
+      )
+      SELECT mr.id, mr.repository_id, mr.source_memory_id AS source_id, mr.target_memory_id AS target_id,
+        mr.relation_type, mr.description, mr.origin, mr.confidence, mr.metadata, mr.created_at,
+        src.summary AS source_summary, src.memory_type AS source_type,
+        tgt.summary AS target_summary, tgt.memory_type AS target_type
+      FROM deduped mr
+      JOIN memories src ON src.id = mr.source_memory_id
+      JOIN memories tgt ON tgt.id = mr.target_memory_id
+      WHERE src.deleted_at IS NULL
+        AND tgt.deleted_at IS NULL
+        ${activeFilter}
+      ORDER BY mr.created_at DESC
+    `;
+  }
+
+  async delete(
+    sourceId: string,
+    targetId: string,
+    relationType: RelationType,
+    repositoryId?: string,
+  ): Promise<boolean> {
+    const sql = this.getSql();
+    const repositoryFilter = repositoryId ? sql`AND repository_id = ${repositoryId}` : sql``;
     const [row] = await sql`
       DELETE FROM memory_relations
       WHERE source_memory_id = ${sourceId}
         AND target_memory_id = ${targetId}
         AND relation_type = ${relationType}
-        ${orgCheck}
+        ${repositoryFilter}
       RETURNING id
     `;
     return !!row;
   }
 
-  async deleteById(id: string, orgId?: string): Promise<boolean> {
+  async deleteById(id: string, repositoryId?: string): Promise<boolean> {
     const sql = this.getSql();
-    const orgCheck = orgId
-      ? sql`AND EXISTS (SELECT 1 FROM memories WHERE id = memory_relations.source_memory_id AND org_id = ${orgId})
-        AND EXISTS (SELECT 1 FROM memories WHERE id = memory_relations.target_memory_id AND org_id = ${orgId})`
-      : sql``;
+    const repositoryFilter = repositoryId ? sql`AND repository_id = ${repositoryId}` : sql``;
     const [row] = await sql`
-      DELETE FROM memory_relations WHERE id = ${id} ${orgCheck} RETURNING id
+      DELETE FROM memory_relations WHERE id = ${id} ${repositoryFilter} RETURNING id
     `;
     return !!row;
   }

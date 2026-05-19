@@ -17,7 +17,7 @@ import { logger } from "./logger.js";
 
 interface QueueItem {
   memoryId: string;
-  orgId?: string | undefined;
+  repositoryId?: string | undefined;
   embeddingText: string;
   purpose: EmbeddingPurpose;
   retries: number;
@@ -86,7 +86,12 @@ export class EmbeddingQueue {
   }
 
   /** Enqueue a memory for background embedding generation. */
-  enqueue(memoryId: string, embeddingText: string, purpose: EmbeddingPurpose = "document", orgId?: string): void {
+  enqueue(
+    memoryId: string,
+    embeddingText: string,
+    purpose: EmbeddingPurpose = "document",
+    repositoryId?: string,
+  ): void {
     if (this.queue.size >= this.maxQueueSize && !this.queue.has(memoryId)) {
       logger.warn("Embedding queue full, dropping oldest item", {
         queue_size: this.queue.size,
@@ -98,7 +103,7 @@ export class EmbeddingQueue {
     }
     this.queue.set(memoryId, {
       memoryId,
-      orgId,
+      repositoryId,
       embeddingText,
       purpose,
       retries: 0,
@@ -146,7 +151,7 @@ export class EmbeddingQueue {
         const embedding = embeddings[i];
         if (embedding) {
           try {
-            await this.memories.update(item.memoryId, { embedding }, item.orgId);
+            await this.memories.update(item.memoryId, { embedding }, item.repositoryId);
             this.queue.delete(item.memoryId);
             if (this.onEmbeddingReady) {
               await this.onEmbeddingReady(item.memoryId, embedding).catch((err: unknown) => {

@@ -34,7 +34,7 @@ export class EntityExtractionService {
   async extractAndLink(
     memoryId: string,
     content: string,
-    orgId: string,
+    repositoryId: string,
     existingTags: string[],
   ): Promise<{ entities: ExtractedEntity[]; relations: ExtractedRelation[] }> {
     // Extract entities from tags (already extracted by the remember pipeline)
@@ -51,8 +51,8 @@ export class EntityExtractionService {
     // Persist entities and link to memory
     for (const entity of allEntities) {
       try {
-        const dbEntity = await this.entities.findOrCreate(entity.name, entity.type, orgId);
-        await this.entities.linkMemory(memoryId, dbEntity.id, 1.0, orgId);
+        const dbEntity = await this.entities.findOrCreate(entity.name, entity.type, repositoryId);
+        await this.entities.linkMemory(memoryId, dbEntity.id, 1.0, repositoryId);
       } catch (err: unknown) {
         logger.debug("Failed to persist entity", {
           entity: entity.name,
@@ -64,9 +64,10 @@ export class EntityExtractionService {
     // Persist entity relations
     for (const rel of relations) {
       try {
-        const sourceEntity = await this.entities.findOrCreate(rel.source, rel.sourceType, orgId);
-        const targetEntity = await this.entities.findOrCreate(rel.target, rel.targetType, orgId);
+        const sourceEntity = await this.entities.findOrCreate(rel.source, rel.sourceType, repositoryId);
+        const targetEntity = await this.entities.findOrCreate(rel.target, rel.targetType, repositoryId);
         await this.entities.createRelation({
+          repositoryId,
           sourceId: sourceEntity.id,
           targetId: targetEntity.id,
           relationType: rel.relation,
@@ -135,7 +136,7 @@ export class EntityExtractionService {
           }
         }
         // Unprefixed — treat as concept
-        return { name: raw, type: "concept" as EntityType };
+        return { name: raw, type: "concept" };
       });
     } catch (err: unknown) {
       logger.debug("LLM entity extraction failed", {

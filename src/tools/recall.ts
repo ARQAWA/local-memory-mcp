@@ -1,84 +1,94 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { getRequestContext } from "../context.js";
 import { MemoryService } from "../services/memory.service.js";
-import { memoryTypes, memoryScopes, tagsFilterSchema } from "../types/memory.js";
-import { getRequestContextOrDefault } from "../context.js";
+import { graphModes, memoryTypes, repositoryReadModes, tagsFilterSchema } from "../types/memory.js";
 import { withErrorHandling } from "./util.js";
 
+const repositorySelector = {
+  repository_mode: z
+    .enum(repositoryReadModes)
+    .default("current")
+    .describe("Default current. Use specific/all only when explicitly requested."),
+  repository: z.string().optional().describe("Repository slug or UUID for repository_mode=specific."),
+};
+
+function compactMemory(m: {
+  id: string;
+  repository_slug: string | null;
+  summary: string;
+  content?: string;
+  memory_type: string;
+  tags: string[];
+  importance: number;
+  composite_score?: number;
+  created_at?: Date;
+  group_id?: string | null;
+  sequence?: number | null;
+  group_type?: string | null;
+  relation_source?: string | undefined;
+  relation_type?: string | undefined;
+  relation_reason?: string | undefined;
+  confidence?: number | undefined;
+  content_mode?: string | undefined;
+  token_cost_estimate?: number | undefined;
+}) {
+  return {
+    id: m.id,
+    repository: m.repository_slug,
+    summary: m.summary,
+    content: m.content,
+    memory_type: m.memory_type,
+    tags: m.tags,
+    importance: Math.round(m.importance * 100) / 100,
+    score: m.composite_score === undefined ? undefined : Math.round(m.composite_score * 1000) / 1000,
+    created_at: m.created_at,
+    ...(m.group_id ? { group_id: m.group_id, sequence: m.sequence, group_type: m.group_type } : {}),
+    ...(m.relation_source
+      ? {
+          relation_source: m.relation_source,
+          relation_type: m.relation_type,
+          relation_reason: m.relation_reason,
+          confidence: m.confidence,
+          content_mode: m.content_mode,
+          token_cost_estimate: m.token_cost_estimate,
+        }
+      : {}),
+  };
+}
+
 export function registerRecallTools(server: McpServer, service: MemoryService) {
-  // recall — the primary read tool
   server.registerTool(
     "recall",
     {
       description:
-        "Smart retrieval of relevant memories. Combines semantic similarity, keyword matching, recency, and importance. Use this as your primary way to pull context.",
+        "Smart retrieval from repository memory. Defaults to the current repository; use repository_mode=specific/all only on explicit request.",
       inputSchema: {
         query: z.string().min(1).describe("What are you looking for?"),
-        context: z.string().optional().describe("What you're currently working on (improves relevance)"),
-        scope: z.enum(memoryScopes).optional().describe("Filter to a specific scope"),
-        team_slug: z.string().optional().describe("Filter to a specific team"),
+        context: z.string().optional().describe("What you're currently working on"),
+        ...repositorySelector,
         memory_type: z.enum(memoryTypes).optional().describe("Filter by memory type"),
         tags: tagsFilterSchema.describe("Filter by tags"),
         limit: z.number().min(1).max(50).default(10).describe("Max memories to return"),
         token_budget: z.number().min(100).max(64000).default(4000).describe("Max tokens in response"),
+        graph_mode: z.enum(graphModes).default("hard").describe("Graph enrichment mode: off, hard, auto, or full."),
       },
-      annotations: {
-        title: "Recall Memories",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-      },
+      annotations: { title: "Recall Memories", readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     },
     withErrorHandling(async (params) => {
-      const ctx = getRequestContextOrDefault();
-      const team_slug = params.team_slug ?? ctx.team_slug;
-      const result = await service.recall({
-        ...params,
-        team_slug,
-        org_id: ctx.org_id,
-        user_id: ctx.user_id,
-      });
-
-      const formatted = result.memories.map((m) => ({
-        id: m.id,
-        summary: m.summary,
-        content: m.content,
-        memory_type: m.memory_type,
-        scope: m.scope,
-        tags: m.tags,
-        importance: Math.round(m.importance * 100) / 100,
-        score: Math.round(m.composite_score * 1000) / 1000,
-        created_at: m.created_at,
-        ...(m.group_id
-          ? {
-              group_id: m.group_id,
-              sequence: m.sequence,
-              group_type: m.group_type,
-            }
-          : {}),
-      }));
-
-      const formattedRelated = (result.related ?? []).map((m) => ({
-        id: m.id,
-        summary: m.summary,
-        memory_type: m.memory_type,
-        scope: m.scope,
-        tags: m.tags,
-        importance: Math.round(m.importance * 100) / 100,
-        relation: "graph_1hop",
-      }));
-
+      const result = await service.recall(params);
       return {
         content: [
           {
             type: "text" as const,
             text: JSON.stringify({
               query: result.query,
-              count: formatted.length,
+              graph_mode: result.graph_mode,
+              count: result.memories.length,
               total_tokens: result.total_tokens,
               truncated: result.truncated,
-              memories: formatted,
-              related: formattedRelated.length > 0 ? formattedRelated : undefined,
+              memories: result.memories.map(compactMemory),
+              related: result.related?.length ? result.related.map(compactMemory) : undefined,
             }),
           },
         ],
@@ -86,71 +96,44 @@ export function registerRecallTools(server: McpServer, service: MemoryService) {
     }, "recall"),
   );
 
-  // get_active_context — always-in-context block (call at session start)
   server.registerTool(
     "get_active_context",
     {
       description:
-        "Get the team's active knowledge block — conventions, recent decisions, key facts. Call at session start. Optionally specify what you're working on for targeted context.",
+        "Get active knowledge for the current repository. Can search another repository only when repository_mode is explicit.",
       inputSchema: {
-        team_slug: z.string().optional().describe("Team slug"),
-        working_on: z
-          .string()
-          .optional()
-          .describe(
-            "What you're currently working on (file path, feature, or topic). Adds targeted context alongside team conventions.",
-          ),
+        ...repositorySelector,
+        working_on: z.string().optional().describe("Current file, feature, or topic"),
         token_budget: z.number().min(100).max(64000).default(4000).describe("Max tokens"),
       },
-      annotations: {
-        title: "Get Active Context",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-      },
+      annotations: { title: "Get Active Context", readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     },
     withErrorHandling(async (params) => {
-      const ctx = getRequestContextOrDefault();
-      const team_slug = params.team_slug ?? ctx.team_slug;
-      const result = await service.getActiveContext(
-        ctx.org_id,
-        team_slug,
-        params.token_budget,
-        params.working_on,
-        ctx.user_id,
-      );
-
+      const result = await service.getActiveContext(params.token_budget, params.working_on, params);
       if (result.memories.length === 0) {
         return {
           content: [
             {
               type: "text" as const,
-              text: "No active context found. Start recording memories with `remember` to build up context.",
+              text: JSON.stringify({
+                repository: result.repository?.slug ?? null,
+                count: 0,
+                memories: [],
+              }),
             },
           ],
         };
       }
-
-      const formatted = result.memories.map((m) => ({
-        id: m.id,
-        summary: m.summary,
-        content: m.content,
-        memory_type: m.memory_type,
-        scope: m.scope,
-        tags: m.tags,
-        importance: Math.round(m.importance * 100) / 100,
-      }));
-
       return {
         content: [
           {
             type: "text" as const,
             text: JSON.stringify({
-              team_slug: team_slug ?? null,
-              count: formatted.length,
+              repository: result.repository?.slug ?? null,
+              count: result.memories.length,
               total_tokens: result.total_tokens,
               truncated: result.truncated,
-              memories: formatted,
+              memories: result.memories.map(compactMemory),
             }),
           },
         ],
@@ -158,65 +141,31 @@ export function registerRecallTools(server: McpServer, service: MemoryService) {
     }, "get_active_context"),
   );
 
-  // get_context_for — auto-retrieval for a topic
   server.registerTool(
     "get_context_for",
     {
-      description: "Get everything relevant to working on a topic or file path. Returns a curated context block.",
+      description: "Get repository memory relevant to a topic or file path.",
       inputSchema: {
-        topic: z.string().min(1).describe("Topic or file path to get context for"),
-        team_slug: z.string().optional().describe("Team scope"),
+        topic: z.string().min(1).describe("Topic or file path"),
+        ...repositorySelector,
         limit: z.number().min(1).max(20).default(10).describe("Max memories"),
-        token_budget: z.number().min(100).max(64000).default(4000).describe("Max tokens in response"),
+        token_budget: z.number().min(100).max(64000).default(4000).describe("Max tokens"),
+        graph_mode: z.enum(graphModes).optional().describe("Optional graph enrichment mode"),
       },
-      annotations: {
-        title: "Get Context For Topic",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-      },
+      annotations: { title: "Get Context For Topic", readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     },
     withErrorHandling(async (params) => {
-      const ctx = getRequestContextOrDefault();
-      const team_slug = params.team_slug ?? ctx.team_slug;
-      const result = await service.getContextFor({
-        ...params,
-        team_slug,
-        org_id: ctx.org_id,
-        user_id: ctx.user_id,
-      });
-
-      if (result.memories.length === 0) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `No relevant memories found for topic: "${params.topic}"`,
-            },
-          ],
-        };
-      }
-
-      const formatted = result.memories.map((m) => ({
-        id: m.id,
-        summary: m.summary,
-        content: m.content,
-        memory_type: m.memory_type,
-        scope: m.scope,
-        tags: m.tags,
-        importance: Math.round(m.importance * 100) / 100,
-      }));
-
+      const result = await service.getContextFor(params);
       return {
         content: [
           {
             type: "text" as const,
             text: JSON.stringify({
-              topic: params.topic,
-              count: formatted.length,
+              topic: result.topic,
+              count: result.memories.length,
               total_tokens: result.total_tokens,
               truncated: result.truncated,
-              memories: formatted,
+              memories: result.memories.map(compactMemory),
             }),
           },
         ],
@@ -224,89 +173,48 @@ export function registerRecallTools(server: McpServer, service: MemoryService) {
     }, "get_context_for"),
   );
 
-  // get_memory — fetch a specific memory by ID
   server.registerTool(
     "get_memory",
     {
-      description: "Fetch a specific memory by ID for drill-down after recall. Includes related memories.",
+      description: "Fetch a specific memory by ID and its direct relations.",
       inputSchema: {
         id: z.uuid().describe("Memory UUID"),
+        ...repositorySelector,
       },
-      annotations: {
-        title: "Get Memory By ID",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-      },
+      annotations: { title: "Get Memory By ID", readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     },
-    withErrorHandling(async ({ id }) => {
-      const ctx = getRequestContextOrDefault();
-      const memory = await service.getMemory(id, ctx.org_id);
-      if (!memory) {
-        return {
-          content: [{ type: "text" as const, text: "Memory not found." }],
-          isError: true,
-        };
-      }
-
-      const relations = await service.getRelated(id, ctx.org_id);
-
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({ ...memory, relations }),
-          },
-        ],
-      };
+    withErrorHandling(async ({ id, repository_mode, repository }) => {
+      const resolved = await service.resolveRepository({ repository_mode, repository });
+      const memory = await service.getMemory(id, resolved.repository_id, { includeInvalidated: false });
+      if (!memory) return { content: [{ type: "text" as const, text: "Memory not found." }], isError: true };
+      const relations = await service.getRelated(id, resolved.repository_id ?? memory.repository_id, {
+        mode: "lineage",
+      });
+      return { content: [{ type: "text" as const, text: JSON.stringify({ ...memory, relations }) }] };
     }, "get_memory"),
   );
 
-  // get_team_overview — team knowledge summary
   server.registerTool(
-    "get_team_overview",
+    "get_repository_overview",
     {
-      description: "Get a summary of a team's knowledge: key decisions, active conventions, recent changes.",
-      inputSchema: {
-        team_slug: z.string().optional().describe("Team slug (defaults to configured team)"),
-      },
-      annotations: {
-        title: "Get Team Overview",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-      },
+      description: "Get the current repository memory summary and statistics.",
+      inputSchema: { ...repositorySelector },
+      annotations: { title: "Repository Overview", readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     },
     withErrorHandling(async (params) => {
-      const ctx = getRequestContextOrDefault();
-      const team_slug = params.team_slug ?? ctx.team_slug;
-      if (!team_slug) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: "Error: team_slug is required (provide it as a parameter or configure it in ~/.engram/config.json).",
-            },
-          ],
-          isError: true,
-        };
-      }
-      const overview = await service.getTeamOverview(team_slug, ctx.org_id);
-      if (!overview) {
-        return {
-          content: [{ type: "text" as const, text: "Team not found." }],
-          isError: true,
-        };
-      }
-
+      const ctx = getRequestContext();
+      const stats = await service.getMemoryStats(params);
       return {
         content: [
           {
             type: "text" as const,
-            text: JSON.stringify(overview),
+            text: JSON.stringify({
+              current_repository: stats.repository?.slug ?? ctx?.repository.repository_slug ?? null,
+              stats,
+            }),
           },
         ],
       };
-    }, "get_team_overview"),
+    }, "get_repository_overview"),
   );
 }

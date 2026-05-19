@@ -21,8 +21,8 @@ class NoOpEmbeddingProvider implements EmbeddingProvider {
     this.dimension = dimension;
   }
 
-  async embed(_text: string, _purpose?: EmbeddingPurpose): Promise<number[]> {
-    return new Array<number>(this.dimension).fill(0);
+  embed(_text: string, _purpose?: EmbeddingPurpose): Promise<number[]> {
+    return Promise.resolve(new Array<number>(this.dimension).fill(0));
   }
 }
 
@@ -33,12 +33,7 @@ class OpenRouterEmbeddingProvider implements EmbeddingProvider {
   private model: string;
   private dimension: number;
 
-  constructor(
-    apiKey: string | undefined,
-    baseUrl: string,
-    model: string,
-    dimension: number,
-  ) {
+  constructor(apiKey: string | undefined, baseUrl: string, model: string, dimension: number) {
     this.apiKey = apiKey;
     this.baseUrl = baseUrl;
     this.model = model;
@@ -82,11 +77,12 @@ class OpenRouterEmbeddingProvider implements EmbeddingProvider {
       }
 
       const payload = (await resp.json()) as {
-        data?: Array<{ embedding?: number[] }>;
+        data?: { embedding?: number[] }[];
       };
-      const embeddings = payload.data?.map((item) => item.embedding).filter((v): v is number[] => Array.isArray(v));
+      const embeddings =
+        payload.data?.map((item) => item.embedding).filter((v): v is number[] => Array.isArray(v)) ?? [];
 
-      if (!embeddings || embeddings.length !== texts.length) {
+      if (embeddings.length !== texts.length) {
         throw new ExternalServiceError("OpenRouter", "Unexpected embedding API response format");
       }
       for (const embedding of embeddings) {

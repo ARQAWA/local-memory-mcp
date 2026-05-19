@@ -1,5 +1,4 @@
-import { getRequestContextOrDefault, requestContext } from "../context.js";
-import { resolveStdioIdentity } from "../services/git-identity.service.js";
+import { getRequestContext, getRequestContextOrDefault } from "../context.js";
 import { logger } from "../services/logger.js";
 import { AuthorizationError } from "../errors.js";
 import { EngramError } from "../errors.js";
@@ -19,15 +18,14 @@ export function withErrorHandling<TParams = Record<string, unknown>>(
       return await handler(params);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      const ctx = getRequestContextOrDefault();
+      const ctx = getRequestContext();
       logger.error("Tool error", {
         tool: toolName,
         error: message,
         code: err instanceof EngramError ? err.code : undefined,
         stack: err instanceof Error ? err.stack : undefined,
-        org_id: ctx.org_id,
-        user_id: ctx.user_id,
-        team_slug: ctx.team_slug,
+        repository: ctx?.repository.repository_slug ?? null,
+        user_id: ctx?.user_id ?? null,
       });
       if (err instanceof EngramError) {
         const detail =
@@ -85,21 +83,4 @@ export function stripUndefined<T extends Record<string, unknown>>(
   return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as ReturnType<
     typeof stripUndefined<T>
   >;
-}
-
-/** Get repo-level auto-tags. Only in stdio mode (no requestContext store). */
-export function getRepoTags(): string[] {
-  if (requestContext.getStore()) return []; // HTTP mode — skip git subprocess calls
-  return resolveStdioIdentity().repo_tags;
-}
-
-/** Merge repo-level auto-tags into user-provided tags (deduplicated). */
-export function mergeRepoTags(userTags: string[], repoTags: string[]): string[] {
-  const merged = [...userTags];
-  for (const tag of repoTags) {
-    if (!merged.includes(tag)) {
-      merged.push(tag);
-    }
-  }
-  return merged;
 }

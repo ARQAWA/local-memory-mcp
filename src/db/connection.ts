@@ -24,9 +24,9 @@ export function getDb(): postgres.Sql {
     onnotice: () => {},
     connection: {
       "hnsw.ef_search": "100",
-      statement_timeout: "30000" as unknown as number,
+      statement_timeout: 30000,
     },
-  }) as unknown as postgres.Sql;
+  });
 
   tryEnablePgvectorTuning(sql).catch(() => {});
   return sql;

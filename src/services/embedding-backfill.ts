@@ -2,8 +2,7 @@
  * Startup check for NULL embeddings left behind by migration 010.
  *
  * Queries the count of active memories with `embedding IS NULL` and logs a
- * warning so operators know to run `reembed_memories`. In cloud mode it can
- * optionally kick off a non-blocking background backfill.
+ * warning so operators know to run `reembed_memories`.
  */
 
 import { logger } from "./logger.js";

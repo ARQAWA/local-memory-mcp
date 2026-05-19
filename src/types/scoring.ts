@@ -1,13 +1,9 @@
-import type { MemoryType, MemoryScope } from "./memory.js";
+import type { MemoryType, RelationType } from "./memory.js";
 
 export interface ScoringWeights {
-  /** RRF constant K — higher values reduce rank-position sensitivity (default: 60) */
   rrfK: number;
-  /** Recency boost range: score *= (1 - recencyBoost) + recencyBoost * recencyDecay */
   recencyBoost: number;
-  /** Importance boost range */
   importanceBoost: number;
-  /** Frequency boost range */
   frequencyBoost: number;
 }
 
@@ -20,10 +16,12 @@ export const DEFAULT_SCORING_WEIGHTS: ScoringWeights = {
 
 export interface ScoredMemory {
   id: string;
+  repository_id: string;
+  repository_slug: string | null;
+  repository_name: string | null;
   summary: string;
   content: string;
   memory_type: MemoryType;
-  scope: MemoryScope;
   tags: string[];
   importance: number;
   access_count: number;
@@ -31,18 +29,18 @@ export interface ScoredMemory {
   created_at: Date;
   valid_from: Date;
   valid_until: Date | null;
-
-  // Group sequence
   group_id: string | null;
   sequence: number | null;
   group_type: string | null;
-
-  // Individual signal scores
   semantic_score: number;
   keyword_score: number;
-
-  // Final composite score
   composite_score: number;
+  relation_source?: "memory_relations" | "shared_entity" | undefined;
+  relation_type?: RelationType | "shared_entity" | undefined;
+  relation_reason?: string | undefined;
+  confidence?: number | undefined;
+  content_mode?: "content" | "summary" | undefined;
+  token_cost_estimate?: number | undefined;
 }
 
 export interface DedupResult {

@@ -1,52 +1,42 @@
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { basename, dirname, join, parse } from "node:path";
 import { homedir } from "node:os";
 import { LRUCache } from "lru-cache";
 import { z } from "zod";
 
-export interface StdioIdentity {
-  org_id: string;
-  team_slug?: string | undefined;
-  user_id: string;
-  role: "admin" | "writer" | "reader";
-  repo_tags: string[];
+export type ProjectIdentityKind = "git" | "folder";
+
+export interface RepositoryIdentity {
+  repository_slug: string;
+  repository_name: string;
+  repository_root: string;
+  repository_root_hash: string;
+  repository_remote_url_hash?: string | undefined;
+  repository_identity_kind: ProjectIdentityKind;
 }
 
-/** Schema for ~/.engram/config.json (global config). */
-const globalConfigSchema = z
-  .object({
-    org_id: z.string().min(1).optional(),
-    team_slug: z.string().min(1).optional(),
-    user_id: z.string().min(1).optional(),
-    sync_personal_to_cloud: z.boolean().optional(),
-    sync_url: z.url().optional(),
-  })
-  .strict();
+export interface StdioIdentity {
+  repository: RepositoryIdentity;
+  user_id: string;
+  role: "admin" | "writer" | "reader";
+}
 
-/** Schema for .engram.json (per-repo config). */
-const repoConfigSchema = z
-  .object({
-    org_id: z.string().min(1).optional(),
-    team_slug: z.string().min(1).optional(),
-    user_id: z.string().min(1).optional(),
-    tags: z.array(z.string().min(1)).optional(),
-  })
-  .strict();
-
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-const cache = new LRUCache<string, StdioIdentity>({
-  max: 100,
-  ttl: CACHE_TTL_MS,
+const globalConfigSchema = z.looseObject({
+  user_id: z.string().min(1).optional(),
 });
+
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const cache = new LRUCache<string, StdioIdentity>({ max: 100, ttl: CACHE_TTL_MS });
 
 export function resetGitIdentityCache(): void {
   cache.clear();
 }
 
-function execGit(args: string, cwd?: string): string | undefined {
+function execGit(args: string[], cwd?: string): string | undefined {
   try {
-    return execFileSync("git", args.split(/\s+/), {
+    return execFileSync("git", args, {
       cwd,
       encoding: "utf-8",
       timeout: 5000,
@@ -57,115 +47,123 @@ function execGit(args: string, cwd?: string): string | undefined {
   }
 }
 
-function readConfigFile<T>(filePath: string, schema: z.ZodType<T>): T | undefined {
+function readGlobalConfig(): z.infer<typeof globalConfigSchema> | undefined {
   let raw: string;
   try {
-    raw = readFileSync(filePath, "utf-8");
+    raw = readFileSync(join(homedir(), ".engram", "config.json"), "utf-8");
   } catch {
-    return undefined; // file doesn't exist
+    return undefined;
   }
-
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as unknown;
+    const result = globalConfigSchema.safeParse(parsed);
+    return result.success ? result.data : undefined;
   } catch {
-    console.warn(`[engram] Invalid JSON in ${filePath}, skipping`);
     return undefined;
   }
+}
 
-  const result = schema.safeParse(parsed);
-  if (!result.success) {
-    console.warn(`[engram] Invalid config in ${filePath}: ${result.error.issues.map((i) => i.message).join(", ")}`);
-    return undefined;
-  }
-  return result.data;
+export function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function extractRepoName(remoteUrl: string): string | undefined {
-  // Handle SSH: git@github.com:org/repo.git
-  const sshMatch = /[:/]([^/]+\/[^/]+?)(?:\.git)?$/.exec(remoteUrl);
-  if (sshMatch?.[1]) {
-    const parts = sshMatch[1].split("/");
-    return parts[parts.length - 1];
-  }
-  return undefined;
+  const match = /[:/]([^/]+?)(?:\.git)?$/.exec(remoteUrl);
+  return match?.[1];
 }
 
-/**
- * Read the sync_personal_to_cloud preference from ~/.engram/config.json.
- * Returns false if the config file is missing or the field is unset.
- */
-export function getSyncPersonalPreference(): boolean {
-  const globalConfig = readConfigFile(join(homedir(), ".engram", "config.json"), globalConfigSchema);
-  return globalConfig?.sync_personal_to_cloud ?? false;
+export function slugify(value: string): string {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120);
+  return slug || "repository";
+}
+
+const projectRootMarkers = [
+  ".ai",
+  ".idea",
+  "pyproject.toml",
+  "package.json",
+  "pnpm-workspace.yaml",
+  "Cargo.toml",
+  "go.mod",
+  "requirements.txt",
+  "README.md",
+] as const;
+
+function canonicalDirectory(path: string): string {
+  const real = realpathSync(path);
+  const stat = statSync(real);
+  return stat.isDirectory() ? real : dirname(real);
+}
+
+function hasProjectMarker(path: string): boolean {
+  return projectRootMarkers.some((marker) => existsSync(join(path, marker)));
+}
+
+function findFolderProjectRoot(cwd: string): string {
+  const start = canonicalDirectory(cwd);
+  let current = start;
+  const root = parse(start).root;
+  while (true) {
+    if (hasProjectMarker(current)) return current;
+    if (current === root) return start;
+    const parent = dirname(current);
+    if (parent === current) return start;
+    current = parent;
+  }
+}
+
+export function resolveProjectRoot(cwd: string): { root: string; kind: ProjectIdentityKind } {
+  const repoRoot = execGit(["rev-parse", "--show-toplevel"], cwd);
+  if (repoRoot) return { root: canonicalDirectory(repoRoot), kind: "git" };
+  return { root: findFolderProjectRoot(cwd), kind: "folder" };
 }
 
 export function resolveStdioIdentity(cwd?: string): StdioIdentity {
-  const effectiveCwd = cwd ?? process.cwd();
-
-  // Check cache
+  const effectiveCwd = process.env["LOCAL_MEMORY_REPOSITORY_ROOT"] ?? cwd ?? process.cwd();
   const cached = cache.get(effectiveCwd);
-  if (cached !== undefined) {
-    return cached;
-  }
+  if (cached) return cached;
 
-  // 1. Environment variables (highest priority)
-  const envOrg = process.env["ENGRAM_ORG"];
-  const envTeam = process.env["ENGRAM_TEAM"];
-  const envUser = process.env["ENGRAM_USER"];
-
-  // 2. Find repo root for .engram.json
-  const repoRoot = execGit("rev-parse --show-toplevel", effectiveCwd);
-  const repoConfig = repoRoot ? readConfigFile(join(repoRoot, ".engram.json"), repoConfigSchema) : undefined;
-
-  // 3. Global config ~/.engram/config.json
-  const globalConfig = readConfigFile(join(homedir(), ".engram", "config.json"), globalConfigSchema);
-
-  // 4. Git fallbacks
-  const gitUserName = execGit("config user.name", effectiveCwd);
-
-  // Resolve each field independently (first non-empty wins)
-  const org_id = envOrg ?? repoConfig?.org_id ?? globalConfig?.org_id ?? "local";
-  const team_slug = envTeam ?? repoConfig?.team_slug ?? globalConfig?.team_slug ?? undefined;
-  const user_id = envUser ?? repoConfig?.user_id ?? globalConfig?.user_id ?? gitUserName ?? "local-user";
-
-  // Build repo tags
-  const repo_tags: string[] = [];
-
-  // Auto-tag from git remote
-  const remoteUrl = execGit("remote get-url origin", effectiveCwd);
-  if (remoteUrl) {
-    const repoName = extractRepoName(remoteUrl);
-    if (repoName) {
-      repo_tags.push(`repo:${repoName}`);
-    }
-  }
-
-  // Merge tags from .engram.json
-  if (repoConfig?.tags) {
-    for (const tag of repoConfig.tags) {
-      if (!repo_tags.includes(tag)) {
-        repo_tags.push(tag);
-      }
-    }
-  }
-
-  const roleEnv = process.env["ENGRAM_ROLE"];
+  const globalConfig = readGlobalConfig();
+  const project = resolveProjectRoot(effectiveCwd);
+  const remoteUrl = project.kind === "git" ? execGit(["remote", "get-url", "origin"], project.root) : undefined;
+  const remoteName = remoteUrl ? extractRepoName(remoteUrl) : undefined;
+  const rawName = remoteName ?? basename(project.root);
+  const userId =
+    process.env["LOCAL_MEMORY_USER"] ??
+    globalConfig?.user_id ??
+    execGit(["config", "user.name"], project.root) ??
+    "local-user";
+  const roleEnv = process.env["LOCAL_MEMORY_ROLE"];
   const validRoles = ["admin", "writer", "reader"] as const;
-  const role = validRoles.includes(roleEnv as (typeof validRoles)[number])
-    ? (roleEnv as (typeof validRoles)[number])
-    : "admin";
 
   const identity: StdioIdentity = {
-    org_id,
-    team_slug,
-    user_id,
-    role,
-    repo_tags,
+    repository: {
+      repository_slug: slugify(rawName),
+      repository_name: rawName,
+      repository_root: project.root,
+      repository_root_hash: sha256(project.root),
+      repository_remote_url_hash: remoteUrl ? sha256(remoteUrl) : undefined,
+      repository_identity_kind: project.kind,
+    },
+    user_id: userId,
+    role: validRoles.includes(roleEnv as (typeof validRoles)[number])
+      ? (roleEnv as (typeof validRoles)[number])
+      : "admin",
   };
 
-  // Cache the result
   cache.set(effectiveCwd, identity);
-
   return identity;
+}
+
+export function tryResolveStdioIdentity(cwd?: string): StdioIdentity | undefined {
+  try {
+    return resolveStdioIdentity(cwd);
+  } catch {
+    return undefined;
+  }
 }

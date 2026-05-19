@@ -10,27 +10,17 @@ export interface McpServerWithSampling {
   samplingService: SamplingService;
 }
 
-const SERVER_INSTRUCTIONS = `You have access to Local Memory MCP, a local persistent memory system for your AI agents.
+const SERVER_INSTRUCTIONS = `You have access to Local Memory MCP, a local persistent memory system.
 
-**Session start:** Call get_active_context to load relevant team knowledge, conventions, and recent activity. Use set_session_context to declare what you're working on so memories get proper context.
+Memory is global on this host but partitioned by repository. Normal reads and writes use the current project, which can be a Git repository or a plain local folder.
 
-**Before making changes:** Call recall with a description of what you're working on. Use get_context_for to get knowledge about a specific topic, file, or service. Use batch_recall to check multiple topics in parallel.
+Search another repository only when the user explicitly asks for it. Then use repository_mode=specific with a repository slug, or repository_mode=all for a deliberate cross-repository search.
 
-**Record knowledge:** Use remember for general memories, remember_fact for verified facts, remember_decision for architectural/design decisions. Always include context about WHY, not just what. Tag memories with relevant topics.
+Session start: call get_active_context. Before non-trivial work, call recall or get_context_for. Record durable facts with remember, remember_fact, or remember_decision. Correct stale memory with correct, and remove irrelevant memory with forget.
 
-**Correct & manage:** Use correct to update outdated information (creates supersedes chain — never just overwrite). Use forget to remove irrelevant memories. Use link_memories to connect related knowledge. Use consolidate to merge fragmented memories on a topic.
+Use graph tools only for strong durable relationships. Create manual edges with link_memories only when both memory IDs are in the current repository and the relation is explicit, useful, and stronger than shared tags or shared entities. Use get_related for drill-down. Use query_entities for file/API/package/error/env discovery. Full graph context is for explicit graph, lineage, dependency, alternative, conflict, history, or broad related-context requests.
 
-**Search & explore:** Use search_memories for filtered queries (by type, tags, scope). Use list_memories to browse recent memories. Use get_memory to read a specific memory. Use get_related to explore connected knowledge. Use get_memory_stats for usage overview. Use get_team_overview for team knowledge summary.
-
-**Debug patterns:** Use get_similar_errors when encountering errors to check known solutions. Use log_resolution after fixing bugs. Use log_learning to record technical insights.
-
-**Conventions:** Use sync_conventions to load team coding conventions into context. Use export_conventions to extract conventions from memories into a shareable format.
-
-**Import/Export:** Use import_markdown to bulk-load knowledge from markdown files. Use export_markdown to export memories for sharing or backup.
-
-**Session end:** Call digest_session to summarize key learnings from this session for the team.
-
-**Admin tools** (require admin role): set_memory_policy, query_entities, detect_conflicts, purge_memories, get_memory_analytics, reembed_memories.`;
+Use list_repositories to discover known repositories. Use get_repository_overview and get_memory_stats for repository health.`;
 
 export function createMcpServer(service: MemoryService, version = "3.5.0"): McpServerWithSampling {
   const server = new McpServer(

@@ -12,10 +12,9 @@ import { EmbeddingQueue } from "./services/embedding-queue.js";
 import { logger } from "./services/logger.js";
 import { runMigrations } from "./db/migrate.js";
 import { closeDb } from "./db/connection.js";
-import { requestContext, samplingContext } from "./context.js";
+import { samplingContext } from "./context.js";
 import { registerApiRoutes } from "./api/routes.js";
 import { registerAdminRoutes } from "./api/admin-routes.js";
-import { toOrgId, toTeamSlug, toUserId } from "./types/index.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -83,7 +82,7 @@ async function startStdio(): Promise<void> {
   const { mcpServer, samplingService } = createMcpServer(service, APP_VERSION);
   const transport = new StdioServerTransport();
 
-  const shutdown = async (signal: string) => {
+  const shutdown = async (signal: string): Promise<void> => {
     logger.info(`${signal} received. Shutting down...`);
     setTimeout(() => {
       logger.error("Forced shutdown after timeout.");
@@ -138,27 +137,12 @@ async function startWeb(): Promise<void> {
   app.use("/api", rateLimiter);
   app.use("/admin/api", rateLimiter);
 
-  app.use((req, _res, next) => {
-    const org = readHeader(req.headers["x-engram-org"]) ?? "local";
-    const team = readHeader(req.headers["x-engram-team"]);
-    const user = readHeader(req.headers["x-engram-user"]) ?? "local-admin";
-    requestContext.run(
-      {
-        org_id: toOrgId(org),
-        team_slug: team ? toTeamSlug(team) : undefined,
-        user_id: toUserId(user),
-        role: "admin",
-      },
-      next,
-    );
-  });
-
   app.get("/health", (_req, res) => {
     res.json({ ok: true, mode: "local", version: APP_VERSION });
   });
 
   app.post("/api/token/generate", (_req, res) => {
-    res.json({ token: "local.local.local", local_only: true });
+    res.json({ token: "local.local.local", local: true });
   });
 
   registerApiRoutes(app, service);
@@ -176,7 +160,7 @@ async function startWeb(): Promise<void> {
     });
   });
 
-  const shutdown = async (signal: string) => {
+  const shutdown = (signal: string): void => {
     logger.info(`${signal} received. Shutting down web server...`);
     server.close(async () => {
       try {
@@ -190,11 +174,6 @@ async function startWeb(): Promise<void> {
 
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
-}
-
-function readHeader(value: string | string[] | undefined): string | undefined {
-  if (Array.isArray(value)) return value[0];
-  return value;
 }
 
 function createRateLimiter(limitPerMin: number): express.RequestHandler {
