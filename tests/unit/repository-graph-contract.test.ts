@@ -74,19 +74,27 @@ describe("repository graph contract", () => {
     expect(migration).toContain("WITH (m = 24, ef_construction = 128)");
   });
 
-  test("repository identity hardening rejects old placeholder rows", () => {
+  test("repository identity hardening requires canonical repository identity", () => {
     const migration = readProjectFile("src/db/migrations/006_repository_identity_hardening.sql");
     const metadataMigration = readProjectFile("src/db/migrations/007_repository_metadata_object_hardening.sql");
-    const cleanupMigration = readProjectFile("src/db/migrations/008_repository_metadata_cleanup.sql");
     const migrate = readProjectFile("src/db/migrate.ts");
 
-    expect(migration).toContain("@after-repository-normalization");
     expect(migration).toContain("root_path SET NOT NULL");
-    expect(migration).toContain("repositories_root_hash_not_legacy");
-    expect(migration).toContain("repositories_no_adopted_legacy_metadata");
+    expect(migration).toContain("repositories_root_hash_sha256");
+    expect(migration).toContain("repositories_metadata_identity_kind");
     expect(metadataMigration).toContain("repositories_metadata_is_object");
-    expect(cleanupMigration).toContain("repositories_no_migration_metadata");
-    expect(migrate).toContain("normalizeRepositoryIdentities");
-    expect(migrate).toContain("@after-repository-normalization");
+    expect(migrate).toContain("for (const migration of pending)");
+  });
+
+  test("schema and cleanup migration remove redundant single-column graph constraints", () => {
+    const schema = readProjectFile("src/db/migrations/001_repository_schema.sql");
+    const cleanup = readProjectFile("src/db/migrations/009_drop_redundant_repository_constraints.sql");
+
+    expect(schema).toContain("memory_tags_memory_repository_fkey");
+    expect(schema).toContain("memory_relations_source_repository_fkey");
+    expect(schema).toContain("entity_relations_source_repository_fkey");
+    expect(cleanup).toContain("redundant_fk");
+    expect(cleanup).toContain("conname NOT IN");
+    expect(cleanup).toContain("memory_tags_memory_repository_fkey");
   });
 });

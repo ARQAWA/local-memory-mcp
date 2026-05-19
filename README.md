@@ -17,8 +17,8 @@ Local-only MCP memory server for AI coding agents.
 - The Web UI is a global viewer. If it is started outside a project folder, it
   shows all repositories by default and does not invent a current repo.
 
-There is no per-agent database, per-repository database, or legacy identity
-compatibility layer.
+There is no per-agent database, per-repository database, or alternate identity
+layer.
 
 Default local URLs:
 
@@ -39,10 +39,9 @@ to `repository_mode=specific`.
 Repository identity rows are hardened:
 
 - `root_path` is required;
-- `root_hash` cannot use old placeholder values;
+- `root_hash` must be a SHA-256 hash of the canonical project path;
 - repository metadata must be a JSON object;
-- old migration metadata is rejected;
-- existing placeholder rows are normalized before hardening migrations run.
+- repository metadata must include `identity_kind`.
 
 Search is repository-correct:
 
@@ -130,7 +129,7 @@ auth material.
 
 ## Install And Migration
 
-Use `INSTALL_AGENT_PROMPT.md` for a fresh install or legacy migration.
+Use `INSTALL_AGENT_PROMPT.md` for a fresh install or reinstall.
 
 The installer must:
 
@@ -138,6 +137,7 @@ The installer must:
 - run migrations;
 - restart the active local Web server;
 - verify `/api/repositories`;
+- verify Web UI default `All repositories`;
 - verify `repository_mode=all`;
 - verify `/ui/` has `Dashboard`, `Memories`, `Search`, and `Graph`;
 - verify `/admin` has `Dashboard` and `All Memories`;

@@ -29,27 +29,12 @@ describe("static UI repository contract", () => {
     }
   });
 
-  test("active UI does not contain legacy identity contract terms", () => {
-    const activeUi = `${readProjectFile("public/index.html")}\n${readProjectFile("public/admin.html")}`;
-    const banned = [
-      "All orgs",
-      "org_id",
-      "team_slug",
-      "AutoScope",
-      "memory_policies",
-      "set_memory_policy",
-      "local_only",
-      "by_scope",
-      "by_org",
-      "by_team",
-      "All scopes",
-      "filter-scope",
-      "scope-badge",
-      ">Scope<",
-    ];
+  test("active UI exposes repository identity only", () => {
+    const html = `${readProjectFile("public/index.html")}\n${readProjectFile("public/admin.html")}`;
 
-    for (const term of banned) {
-      expect(activeUi).not.toContain(term);
-    }
+    expect(html).toContain("repository-select");
+    expect(html).toContain("filter-repository");
+    expect(html).toContain("All repositories");
+    expect(html).toContain("repository_mode");
   });
 });

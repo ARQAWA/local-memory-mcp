@@ -1,4 +1,5 @@
 import postgres from "postgres";
+import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,6 +50,10 @@ function vector(seed: number): string {
   return `[${values.join(",")}]`;
 }
 
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
 function vectorCase(alias = "gs"): string {
   const parts: string[] = ["CASE"];
   for (let i = 0; i < 16; i += 1) {
@@ -85,7 +90,7 @@ async function seedRepo(sql: postgres.Sql, slug: string, count: number): Promise
       ${slug},
       ${slug},
       ${`/tmp/${slug}`},
-      ${`perf-${slug}`},
+      ${sha256(`/tmp/${slug}`)},
       '{"identity_kind":"folder"}'::jsonb
     )
     RETURNING id::text

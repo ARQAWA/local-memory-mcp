@@ -7,13 +7,19 @@ CREATE TABLE IF NOT EXISTS repositories (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   slug TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
-  root_path TEXT,
+  root_path TEXT NOT NULL,
   root_hash TEXT NOT NULL UNIQUE,
   remote_url_hash TEXT,
   metadata JSONB NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT repositories_root_hash_sha256 CHECK (root_hash ~ '^[0-9a-f]{64}$'),
+  CONSTRAINT repositories_metadata_is_object CHECK (jsonb_typeof(metadata) = 'object'),
+  CONSTRAINT repositories_metadata_identity_kind CHECK (
+    metadata ? 'identity_kind'
+    AND metadata->>'identity_kind' IN ('git', 'folder')
+  )
 );
 
 CREATE TABLE IF NOT EXISTS memories (
@@ -40,25 +46,30 @@ CREATE TABLE IF NOT EXISTS memories (
   created_by TEXT NOT NULL DEFAULT 'agent',
   source TEXT,
   external_id TEXT,
-  supersedes UUID REFERENCES memories(id) ON DELETE SET NULL,
+  supersedes UUID,
   group_id UUID,
   sequence INTEGER,
   group_type VARCHAR(50),
-  deleted_at TIMESTAMPTZ
+  deleted_at TIMESTAMPTZ,
+  CONSTRAINT memories_id_repository_id_key UNIQUE (id, repository_id),
+  CONSTRAINT memories_supersedes_repository_fkey
+    FOREIGN KEY (supersedes, repository_id) REFERENCES memories(id, repository_id)
 );
 
 CREATE TABLE IF NOT EXISTS memory_tags (
-  memory_id UUID NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
-  repository_id UUID NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+  memory_id UUID NOT NULL,
+  repository_id UUID NOT NULL,
   tag TEXT NOT NULL,
-  PRIMARY KEY (memory_id, tag)
+  PRIMARY KEY (memory_id, tag),
+  CONSTRAINT memory_tags_memory_repository_fkey
+    FOREIGN KEY (memory_id, repository_id) REFERENCES memories(id, repository_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS memory_relations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  repository_id UUID NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-  source_memory_id UUID NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
-  target_memory_id UUID NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  repository_id UUID NOT NULL,
+  source_memory_id UUID NOT NULL,
+  target_memory_id UUID NOT NULL,
   relation_type TEXT NOT NULL,
   description TEXT,
   origin TEXT NOT NULL DEFAULT 'manual',
@@ -66,17 +77,27 @@ CREATE TABLE IF NOT EXISTS memory_relations (
   metadata JSONB NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (repository_id, source_memory_id, target_memory_id, relation_type),
-  CHECK (source_memory_id <> target_memory_id)
+  CHECK (source_memory_id <> target_memory_id),
+  CONSTRAINT memory_relations_relation_type_check
+    CHECK (relation_type IN ('supersedes', 'depends_on', 'related_to', 'implements', 'alternative_to', 'contradicts')),
+  CONSTRAINT memory_relations_origin_check CHECK (origin IN ('manual', 'lineage', 'derived')),
+  CONSTRAINT memory_relations_confidence_check CHECK (confidence >= 0 AND confidence <= 1),
+  CONSTRAINT memory_relations_source_repository_fkey
+    FOREIGN KEY (source_memory_id, repository_id) REFERENCES memories(id, repository_id) ON DELETE CASCADE,
+  CONSTRAINT memory_relations_target_repository_fkey
+    FOREIGN KEY (target_memory_id, repository_id) REFERENCES memories(id, repository_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   repository_id UUID NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-  memory_id UUID REFERENCES memories(id) ON DELETE CASCADE,
+  memory_id UUID,
   action TEXT NOT NULL,
   actor TEXT NOT NULL,
   changes JSONB,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT audit_log_memory_repository_fkey
+    FOREIGN KEY (memory_id, repository_id) REFERENCES memories(id, repository_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS entities (
@@ -89,28 +110,39 @@ CREATE TABLE IF NOT EXISTS entities (
   metadata JSONB NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT entities_id_repository_id_key UNIQUE (id, repository_id),
   UNIQUE (repository_id, entity_type, name)
 );
 
 CREATE TABLE IF NOT EXISTS memory_entities (
-  memory_id UUID NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
-  repository_id UUID NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-  entity_id UUID NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+  memory_id UUID NOT NULL,
+  repository_id UUID NOT NULL,
+  entity_id UUID NOT NULL,
   relevance DOUBLE PRECISION NOT NULL DEFAULT 1.0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (memory_id, entity_id)
+  PRIMARY KEY (memory_id, entity_id),
+  CONSTRAINT memory_entities_memory_repository_fkey
+    FOREIGN KEY (memory_id, repository_id) REFERENCES memories(id, repository_id) ON DELETE CASCADE,
+  CONSTRAINT memory_entities_entity_repository_fkey
+    FOREIGN KEY (entity_id, repository_id) REFERENCES entities(id, repository_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS entity_relations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  repository_id UUID NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-  source_entity_id UUID NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-  target_entity_id UUID NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+  repository_id UUID NOT NULL,
+  source_entity_id UUID NOT NULL,
+  target_entity_id UUID NOT NULL,
   relation_type TEXT NOT NULL,
   description TEXT,
-  memory_id UUID REFERENCES memories(id) ON DELETE SET NULL,
+  memory_id UUID,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (repository_id, source_entity_id, target_entity_id, relation_type)
+  UNIQUE (repository_id, source_entity_id, target_entity_id, relation_type),
+  CONSTRAINT entity_relations_source_repository_fkey
+    FOREIGN KEY (source_entity_id, repository_id) REFERENCES entities(id, repository_id) ON DELETE CASCADE,
+  CONSTRAINT entity_relations_target_repository_fkey
+    FOREIGN KEY (target_entity_id, repository_id) REFERENCES entities(id, repository_id) ON DELETE CASCADE,
+  CONSTRAINT entity_relations_memory_repository_fkey
+    FOREIGN KEY (memory_id, repository_id) REFERENCES memories(id, repository_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS memory_blocks (

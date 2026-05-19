@@ -20,11 +20,10 @@ describe("RepositorySelectorSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  test("rejects old identity fields", () => {
+  test("rejects unknown identity fields", () => {
     const result = RepositorySelectorSchema.safeParse({
       repository_mode: "all",
-      org_id: "legacy",
-      team_slug: "legacy",
+      identity_key: "unexpected",
     });
     expect(result.success).toBe(false);
   });

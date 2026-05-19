@@ -71,21 +71,21 @@ Steps:
 15. Verify Web UI and Admin UI.
 16. Start a fresh agent/MCP session and verify tool schemas.
 
-Legacy migration checks:
+Install checks:
 - `dist` must be freshly built after `rm -rf dist`.
 - `/api/repositories` must exist.
 - `/api/stats?repository_mode=all` must work.
-- Existing repository rows must have non-null `root_path`, non-placeholder
-  `root_hash`, and object metadata.
+- Existing repository rows must have non-null `root_path`, SHA-256 `root_hash`,
+  and object metadata with `identity_kind`.
 - `/ui/` must show repository controls.
+- `/ui/` may default to `All repositories`; this is the intended global
+  viewer mode.
 - `/ui/` must keep the viewer tabs: `Dashboard`, `Memories`, `Search`,
   `Graph`.
 - `/admin` must keep `Dashboard`, `All Memories`, period selection,
   repository chart, pagination, and memory detail modal.
-- Active UI and `dist` must not contain old org/team/scope labels.
-- MCP schemas must not expose `team_slug`, `scope`, `org_id`, AutoScope,
-  `get_team_overview`, `set_memory_policy`, `memory_policies`, or
-  `local_only`.
+- Active UI and `dist` must expose repository identity only.
+- MCP schemas must expose only repository-first selector fields.
 
 Managed contract:
 
@@ -110,7 +110,7 @@ Search another repository only when the user explicitly asks for it. Use
 for a deliberate cross-repository search.
 
 Do not use old identity parameters. Do not use automatic cross-repository
-selection. Do not use backward-compatible aliases.
+selection. Do not use identity aliases.
 
 At the start of a non-trivial task, call `get_active_context` and, when useful,
 `set_session_context`.

@@ -1,5 +1,3 @@
--- @after-repository-normalization
-
 UPDATE repositories
 SET metadata = (metadata #>> '{}')::jsonb
 WHERE jsonb_typeof(metadata) = 'string'

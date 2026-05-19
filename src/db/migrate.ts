@@ -3,7 +3,6 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDb, closeDb } from "./connection.js";
 import { logger } from "../services/logger.js";
-import { assertRepositoryIdentitiesClean, normalizeRepositoryIdentities } from "./repository-normalization.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -81,20 +80,9 @@ export async function runMigrations(): Promise<void> {
         file,
         content: readFileSync(join(migrationsDir, file), "utf-8"),
       }));
-    const regularMigrations = pending.filter((m) => !m.content.includes("@after-repository-normalization"));
-    const postNormalizationMigrations = pending.filter((m) => m.content.includes("@after-repository-normalization"));
-
-    for (const migration of regularMigrations) {
+    for (const migration of pending) {
       await applyMigration(sql, migration.file, migration.content);
     }
-
-    await normalizeRepositoryIdentities(sql);
-    await assertRepositoryIdentitiesClean(sql);
-
-    for (const migration of postNormalizationMigrations) {
-      await applyMigration(sql, migration.file, migration.content);
-    }
-    await assertRepositoryIdentitiesClean(sql);
 
     logger.info("All migrations applied.");
   } finally {
