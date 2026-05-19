@@ -31,8 +31,8 @@ export default tseslint.config(
     },
   },
   {
-    // Storage abstraction layer — uses `any` by design for dynamic tagged-template SQL APIs
-    files: ["src/db/pglite-connection.ts", "src/db/storage-factory.ts", "src/db/pglite-sql.ts", "src/db/connection.ts"],
+    // Database connection — uses dynamic tagged-template SQL APIs
+    files: ["src/db/connection.ts"],
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-unsafe-assignment": "off",
@@ -59,13 +59,6 @@ export default tseslint.config(
       "@typescript-eslint/no-unsafe-return": "off",
       "@typescript-eslint/no-unsafe-argument": "off",
       "@typescript-eslint/no-explicit-any": "off",
-    },
-  },
-  {
-    // CLI init script — uses Record<string, string> with bracket access
-    files: ["src/cli/init.ts"],
-    rules: {
-      "@typescript-eslint/no-unsafe-assignment": "off",
     },
   },
   {

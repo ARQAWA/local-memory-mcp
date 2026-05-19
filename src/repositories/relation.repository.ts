@@ -149,32 +149,4 @@ export class RelationRepository {
       ORDER BY mr.created_at DESC
     `;
   }
-
-  async delete(
-    sourceId: string,
-    targetId: string,
-    relationType: RelationType,
-    repositoryId?: string,
-  ): Promise<boolean> {
-    const sql = this.getSql();
-    const repositoryFilter = repositoryId ? sql`AND repository_id = ${repositoryId}` : sql``;
-    const [row] = await sql`
-      DELETE FROM memory_relations
-      WHERE source_memory_id = ${sourceId}
-        AND target_memory_id = ${targetId}
-        AND relation_type = ${relationType}
-        ${repositoryFilter}
-      RETURNING id
-    `;
-    return !!row;
-  }
-
-  async deleteById(id: string, repositoryId?: string): Promise<boolean> {
-    const sql = this.getSql();
-    const repositoryFilter = repositoryId ? sql`AND repository_id = ${repositoryId}` : sql``;
-    const [row] = await sql`
-      DELETE FROM memory_relations WHERE id = ${id} ${repositoryFilter} RETURNING id
-    `;
-    return !!row;
-  }
 }

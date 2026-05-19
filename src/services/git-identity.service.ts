@@ -86,13 +86,12 @@ function findFolderProjectRoot(cwd: string): string {
   const start = canonicalDirectory(cwd);
   let current = start;
   const root = parse(start).root;
-  while (true) {
+  while (current !== root) {
     if (hasProjectMarker(current)) return current;
-    if (current === root) return start;
-    const parent = dirname(current);
-    if (parent === current) return start;
-    current = parent;
+    current = dirname(current);
   }
+  if (hasProjectMarker(current)) return current;
+  return start;
 }
 
 export function resolveProjectRoot(cwd: string): { root: string; kind: ProjectIdentityKind } {
@@ -110,10 +109,7 @@ export function resolveStdioIdentity(cwd?: string): StdioIdentity {
   const remoteUrl = project.kind === "git" ? execGit(["remote", "get-url", "origin"], project.root) : undefined;
   const remoteName = remoteUrl ? extractRepoName(remoteUrl) : undefined;
   const rawName = remoteName ?? basename(project.root);
-  const userId =
-    process.env["LOCAL_MEMORY_USER"] ??
-    execGit(["config", "user.name"], project.root) ??
-    "local-user";
+  const userId = process.env["LOCAL_MEMORY_USER"] ?? execGit(["config", "user.name"], project.root) ?? "local-user";
   const roleEnv = process.env["LOCAL_MEMORY_ROLE"];
   const validRoles = ["admin", "writer", "reader"] as const;
 
@@ -134,12 +130,4 @@ export function resolveStdioIdentity(cwd?: string): StdioIdentity {
 
   cache.set(effectiveCwd, identity);
   return identity;
-}
-
-export function tryResolveStdioIdentity(cwd?: string): StdioIdentity | undefined {
-  try {
-    return resolveStdioIdentity(cwd);
-  } catch {
-    return undefined;
-  }
 }

@@ -53,10 +53,4 @@ export {
   tagsFilterSchema,
 } from "./memory.js";
 
-export type { AuthContext, AuthContextBranded, Role } from "./auth.js";
-export { AuthContextSchema, roleValues } from "./auth.js";
-
-export type { Result } from "./result.js";
-export { Err, Ok, collect, flatMap, fromPromise, fromThrowable, map, mapErr, unwrap, unwrapOr } from "./result.js";
-
 export type { ScoredMemory } from "./scoring.js";

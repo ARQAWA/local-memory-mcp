@@ -141,10 +141,6 @@ async function startWeb(): Promise<void> {
     res.json({ ok: true, mode: "local", version: APP_VERSION });
   });
 
-  app.post("/api/token/generate", (_req, res) => {
-    res.json({ token: "local.local.local", local: true });
-  });
-
   registerApiRoutes(app, service);
   registerAdminRoutes(app, service);
 

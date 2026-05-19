@@ -7,7 +7,6 @@ import {
   generateSummary as heuristicGenerateSummary,
 } from "./scoring.service.js";
 import type { MemoryType } from "../types/memory.js";
-import type { ScoredMemory } from "../types/scoring.js";
 import { logger } from "./logger.js";
 
 export interface SamplingServiceOptions {
@@ -180,60 +179,6 @@ Return ONLY the entity list, no explanation. Max 30 entities.`,
     }
 
     return null; // Caller falls back to regex extraction
-  }
-
-  /**
-   * Rerank memories by relevance to a query.
-   * Falls back to null (caller keeps existing composite order).
-   */
-  async rerank(query: string, memories: ScoredMemory[], limit: number): Promise<ScoredMemory[] | null> {
-    if (memories.length <= 1) return null;
-
-    // Build compact index for LLM — only show first 20
-    const capped = memories.slice(0, 20);
-    const summaries = capped.map((m, i) => `${i}: ${m.summary}`).join("\n");
-
-    const result = await this.sample(
-      "You rerank search results by relevance. Return ONLY a comma-separated list of indices (e.g. '3,0,7,1'). Most relevant first.",
-      `Query: ${query}\n\nResults:\n${summaries}\n\nReturn the top ${limit} indices ordered by relevance:`,
-      50,
-    );
-
-    if (result) {
-      try {
-        const indices = result
-          .trim()
-          .split(/[,\s]+/)
-          .map((s) => parseInt(s.trim(), 10))
-          .filter((n) => !isNaN(n) && n >= 0 && n < capped.length);
-
-        if (indices.length > 0) {
-          const seen = new Set<number>();
-          const reranked: ScoredMemory[] = [];
-          for (const idx of indices) {
-            if (!seen.has(idx)) {
-              seen.add(idx);
-              const mem = capped[idx];
-              if (mem) reranked.push(mem);
-            }
-            if (reranked.length >= limit) break;
-          }
-          // Append any remaining from full array that weren't included
-          for (let i = 0; i < memories.length; i++) {
-            if (reranked.length >= limit) break;
-            // For capped items, use the seen set; for items beyond cap, always append
-            if (i < capped.length && seen.has(i)) continue;
-            const mem = memories[i];
-            if (mem) reranked.push(mem);
-          }
-          return reranked;
-        }
-      } catch {
-        // Parse failure — fall through
-      }
-    }
-
-    return null;
   }
 
   // ─── Internal ───

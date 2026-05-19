@@ -118,69 +118,6 @@ export class EntityRepository {
     return row;
   }
 
-  async findMemoriesByEntity(
-    entityName: string,
-    entityType: EntityType,
-    repositoryId: string,
-    limit = 20,
-  ): Promise<{ memory_id: string; relevance: number }[]> {
-    const sql = this.getSql();
-    return sql<{ memory_id: string; relevance: number }[]>`
-      SELECT me.memory_id, me.relevance
-      FROM memory_entities me
-      JOIN entities e ON e.id = me.entity_id AND e.repository_id = ${repositoryId}
-      JOIN memories m ON m.id = me.memory_id
-       AND m.repository_id = ${repositoryId}
-       AND m.deleted_at IS NULL
-       AND m.valid_until IS NULL
-      WHERE e.name = ${entityName} AND e.entity_type = ${entityType}
-      ORDER BY me.relevance DESC, m.importance DESC
-      LIMIT ${limit}
-    `;
-  }
-
-  async findRelatedEntities(
-    entityId: string,
-    repositoryId: string,
-    depth = 1,
-  ): Promise<(EntityRelation & { source_name: string; target_name: string })[]> {
-    const sql = this.getSql();
-    if (depth <= 1) {
-      return sql<(EntityRelation & { source_name: string; target_name: string })[]>`
-        SELECT er.*, src.name AS source_name, tgt.name AS target_name
-        FROM entity_relations er
-        JOIN entities src ON src.id = er.source_entity_id AND src.repository_id = ${repositoryId}
-        JOIN entities tgt ON tgt.id = er.target_entity_id AND tgt.repository_id = ${repositoryId}
-        WHERE er.repository_id = ${repositoryId}
-          AND (er.source_entity_id = ${entityId} OR er.target_entity_id = ${entityId})
-        ORDER BY er.created_at DESC
-      `;
-    }
-    return sql<(EntityRelation & { source_name: string; target_name: string })[]>`
-      WITH direct AS (
-        SELECT CASE
-          WHEN source_entity_id = ${entityId} THEN target_entity_id
-          ELSE source_entity_id
-        END AS related_id
-        FROM entity_relations
-        WHERE repository_id = ${repositoryId}
-          AND (source_entity_id = ${entityId} OR target_entity_id = ${entityId})
-      )
-      SELECT er.*, src.name AS source_name, tgt.name AS target_name
-      FROM entity_relations er
-      JOIN entities src ON src.id = er.source_entity_id AND src.repository_id = ${repositoryId}
-      JOIN entities tgt ON tgt.id = er.target_entity_id AND tgt.repository_id = ${repositoryId}
-      WHERE er.repository_id = ${repositoryId}
-        AND (
-          er.source_entity_id = ${entityId}
-          OR er.target_entity_id = ${entityId}
-          OR er.source_entity_id IN (SELECT related_id FROM direct)
-          OR er.target_entity_id IN (SELECT related_id FROM direct)
-        )
-      ORDER BY er.created_at DESC
-    `;
-  }
-
   async searchByName(
     query: string,
     repositoryId: string,
@@ -280,41 +217,5 @@ export class EntityRepository {
       shared_entities: Array.isArray(row.shared_entities) ? row.shared_entities : [],
       score: Number(row.score) || 0,
     }));
-  }
-
-  async purgeOrphanedEntities(repositoryId: string): Promise<{ entities_deleted: number; relations_deleted: number }> {
-    const sql = this.getSql();
-    const [relationsResult] = await sql<{ count: number }[]>`
-      WITH deleted_relations AS (
-        DELETE FROM entity_relations er
-        WHERE er.repository_id = ${repositoryId}
-          AND (
-            NOT EXISTS (SELECT 1 FROM entities e WHERE e.id = er.source_entity_id)
-            OR NOT EXISTS (SELECT 1 FROM entities e WHERE e.id = er.target_entity_id)
-          )
-        RETURNING id
-      )
-      SELECT COUNT(*)::int AS count FROM deleted_relations
-    `;
-    const [entitiesResult] = await sql<{ count: number }[]>`
-      WITH deleted_entities AS (
-        DELETE FROM entities e
-        WHERE e.repository_id = ${repositoryId}
-          AND NOT EXISTS (
-            SELECT 1 FROM memory_entities me
-            JOIN memories m ON m.id = me.memory_id
-            WHERE me.entity_id = e.id
-              AND me.repository_id = ${repositoryId}
-              AND m.deleted_at IS NULL
-              AND m.valid_until IS NULL
-          )
-        RETURNING id
-      )
-      SELECT COUNT(*)::int AS count FROM deleted_entities
-    `;
-    return {
-      entities_deleted: entitiesResult?.count ?? 0,
-      relations_deleted: relationsResult?.count ?? 0,
-    };
   }
 }

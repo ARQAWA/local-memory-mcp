@@ -376,15 +376,6 @@ export class MemoryService {
     });
   }
 
-  async removeLink(
-    sourceId: string,
-    targetId: string,
-    relationType: RelationType,
-    repositoryId?: string,
-  ): Promise<boolean> {
-    return this.relations.delete(sourceId, targetId, relationType, repositoryId);
-  }
-
   async getGroupMemories(
     groupId: string,
     repositoryId?: string,

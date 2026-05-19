@@ -258,10 +258,6 @@ export class MemoryRepository {
     });
   }
 
-  async findActiveById(id: string, repositoryId?: string): Promise<Memory | null> {
-    return this.findById(id, repositoryId, { activeOnly: true });
-  }
-
   async findByExternalId(repositoryId: string, externalId: string): Promise<Memory | null> {
     const sql = this.getSql();
     const [row] = await sql<(Memory & { _tags: string | null })[]>`
@@ -444,16 +440,6 @@ export class MemoryRepository {
     return rows.map((r) => this.parseTags(r));
   }
 
-  async updateAccessStats(id: string, repositoryId?: string): Promise<void> {
-    const sql = this.getSql();
-    const repositoryFilter = repositoryId ? sql`AND repository_id = ${repositoryId}` : sql``;
-    await sql`
-      UPDATE memories
-      SET access_count = access_count + 1, last_accessed_at = now()
-      WHERE id = ${id} AND deleted_at IS NULL ${repositoryFilter}
-    `;
-  }
-
   async batchUpdateAccessStats(ids: string[], repositoryId?: string): Promise<void> {
     if (ids.length === 0) return;
     const sql = this.getSql();
@@ -570,17 +556,6 @@ export class MemoryRepository {
     };
   }
 
-  async findByIds(ids: string[], repositoryId?: string): Promise<Memory[]> {
-    if (ids.length === 0) return [];
-    const sql = this.getSql();
-    const repositoryFilter = repositoryId ? sql`AND m.repository_id = ${repositoryId}` : sql``;
-    const rows = await sql<(Memory & { _tags: string | null })[]>`
-      ${this.selectMemorySql()}
-      WHERE m.id = ANY(${ids}) AND m.deleted_at IS NULL ${repositoryFilter}
-    `;
-    return rows.map((r) => this.parseTags(r));
-  }
-
   async findActiveByIds(ids: string[], repositoryId?: string): Promise<Memory[]> {
     if (ids.length === 0) return [];
     const sql = this.getSql();
@@ -611,48 +586,6 @@ export class MemoryRepository {
       LIMIT ${limit}
     `;
     return rows.map((r) => this.parseTags(r));
-  }
-
-  async searchByTagPrefix(
-    prefix: string,
-    repositoryId?: string,
-    limit = 20,
-  ): Promise<{ tag: string; count: number }[]> {
-    const sql = this.getSql();
-    const repositoryFilter = repositoryId ? sql`AND mt.repository_id = ${repositoryId}` : sql``;
-    return sql<{ tag: string; count: number }[]>`
-      SELECT mt.tag, COUNT(*)::int AS count
-      FROM memory_tags mt
-      JOIN memories m ON m.id = mt.memory_id
-      WHERE mt.tag LIKE ${`${prefix}%`}
-        AND m.deleted_at IS NULL
-        AND m.valid_until IS NULL
-        AND (m.expires_at IS NULL OR m.expires_at > now())
-        ${repositoryFilter}
-      GROUP BY mt.tag
-      ORDER BY count DESC, mt.tag ASC
-      LIMIT ${limit}
-    `;
-  }
-
-  async expireMemories(batchSize = 100, repositoryId?: string): Promise<number> {
-    const sql = this.getSql();
-    const repositoryFilter = repositoryId ? sql`AND repository_id = ${repositoryId}` : sql``;
-    const rows = await sql<{ id: string }[]>`
-      UPDATE memories
-      SET deleted_at = now(), valid_until = now(), updated_at = now()
-      WHERE id IN (
-        SELECT id FROM memories
-        WHERE deleted_at IS NULL
-          AND valid_until IS NULL
-          AND expires_at IS NOT NULL
-          AND expires_at <= now()
-          ${repositoryFilter}
-        LIMIT ${batchSize}
-      )
-      RETURNING id
-    `;
-    return rows.length;
   }
 
   private activeConditions(sql: Sql): SqlFragment[] {

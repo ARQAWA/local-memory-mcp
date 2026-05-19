@@ -10,8 +10,6 @@ export const configSchema = z
 
     databaseUrl: z.string().default(DEFAULT_DATABASE_URL),
 
-    mcpTransport: z.enum(["stdio", "web"]).default("stdio"),
-
     embeddingProvider: z.enum(["openrouter", "noop"]).default("openrouter"),
     embeddingModel: z.string().default("openai/text-embedding-3-small"),
     embeddingDimension: z.coerce.number().int().min(1).max(4096).default(256),
@@ -35,7 +33,6 @@ export function loadConfig(): Config {
     host: env["LOCAL_MEMORY_HOST"] ?? env["HOST"],
     nodeEnv: env["NODE_ENV"],
     databaseUrl: env["LOCAL_MEMORY_DATABASE_URL"] ?? env["DATABASE_URL"],
-    mcpTransport: env["MCP_TRANSPORT"],
     embeddingProvider: env["EMBEDDING_PROVIDER"],
     embeddingModel: env["EMBEDDING_MODEL"],
     embeddingDimension: env["EMBEDDING_DIMENSION"],

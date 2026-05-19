@@ -64,17 +64,6 @@ export class AuditRepository {
     });
   }
 
-  async getByEntry(memoryId: string, repositoryId?: string): Promise<AuditEntry[]> {
-    const sql = this.getSql();
-    const repositoryFilter = repositoryId ? sql`AND repository_id = ${repositoryId}` : sql``;
-    const rows = await sql<AuditEntry[]>`
-      SELECT * FROM audit_log
-      WHERE memory_id = ${memoryId} ${repositoryFilter}
-      ORDER BY created_at DESC
-    `;
-    return normalizeAuditRows(rows);
-  }
-
   async getRecent(limit = 50, repositoryId?: string): Promise<AuditEntry[]> {
     const sql = this.getSql();
     const repositoryFilter = repositoryId ? sql`WHERE repository_id = ${repositoryId}` : sql``;
