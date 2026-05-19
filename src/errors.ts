@@ -49,8 +49,8 @@ export class ExternalServiceError extends LocalMemoryError {
 }
 
 /**
- * Wrap a database operation so that raw driver exceptions (postgres, sqlite)
- * are caught and re-thrown as `DatabaseError` with a descriptive label.
+ * Wrap a database operation so that raw driver exceptions are caught and
+ * re-thrown as `DatabaseError` with a descriptive label.
  * Keeps `DatabaseError` instances as-is to avoid double-wrapping.
  */
 export async function dbQuery<T>(label: string, fn: () => Promise<T>): Promise<T> {

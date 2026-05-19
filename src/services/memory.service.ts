@@ -1,4 +1,4 @@
-import { getDb, withTransaction } from "../db/connection.js";
+import { withTransaction } from "../db/connection.js";
 import { ValidationError } from "../errors.js";
 import { getRequestContextOrDefault, getSamplingService } from "../context.js";
 import type { AuditRepository } from "../repositories/audit.repository.js";
@@ -557,19 +557,7 @@ export class MemoryService {
     selector?: RepositorySelector,
   ): Promise<{ deleted: number; audit_rows: number }> {
     const { repository_id } = await this.resolveRepository(selector);
-    const sql = getDb();
-    const repositoryFilter = repository_id ? sql`AND repository_id = ${repository_id}` : sql``;
-    const auditRows = await sql<{ id: string }[]>`
-      DELETE FROM audit_log
-      WHERE memory_id IN (SELECT id FROM memories WHERE user_id = ${userId} ${repositoryFilter})
-      RETURNING id
-    `;
-    const rows = await sql<{ id: string }[]>`
-      DELETE FROM memories
-      WHERE user_id = ${userId} ${repositoryFilter}
-      RETURNING id
-    `;
-    return { deleted: rows.length, audit_rows: auditRows.length };
+    return this.memories.purgeByUser(userId, repository_id);
   }
 
   async getAnalytics(selector?: RepositorySelector): Promise<MemoryStats> {
@@ -614,47 +602,36 @@ export class MemoryService {
     operation: "replace" | "append" | "prepend" = "replace",
   ): Promise<{ name: string; content: string; max_tokens: number; repository_id: string; updated_at: Date }> {
     const repository = await this.currentRepository();
-    const sql = getDb();
-    const [existing] = await sql<{ content: string }[]>`
-      SELECT content FROM memory_blocks WHERE repository_id = ${repository.id} AND name = ${name}
-    `;
+    const existing = this.memories.listBlocks(repository.id).find((block) => block.name === name);
     const next =
       operation === "append" && existing
         ? `${existing.content}\n${content}`
         : operation === "prepend" && existing
           ? `${content}\n${existing.content}`
           : content;
-    const [row] = await sql<
-      { name: string; content: string; max_tokens: number; repository_id: string; updated_at: Date }[]
-    >`
-      INSERT INTO memory_blocks (id, repository_id, name, content, max_tokens)
-      VALUES (gen_random_uuid(), ${repository.id}, ${name}, ${next}, ${maxTokens})
-      ON CONFLICT (repository_id, name)
-      DO UPDATE SET content = EXCLUDED.content, max_tokens = EXCLUDED.max_tokens, updated_at = now()
-      RETURNING name, content, max_tokens, repository_id, updated_at
-    `;
-    if (!row) throw new ValidationError("Failed to update memory block");
-    return row;
+    return this.memories.upsertBlock(repository.id, name, next, maxTokens);
   }
 
   async listMemoryBlocks(): Promise<{ name: string; content: string; max_tokens: number; repository_id: string }[]> {
     const repository = await this.currentRepository();
-    const sql = getDb();
-    return sql<{ name: string; content: string; max_tokens: number; repository_id: string }[]>`
-      SELECT name, content, max_tokens, repository_id
-      FROM memory_blocks
-      WHERE repository_id = ${repository.id}
-      ORDER BY name
-    `;
+    return this.memories.listBlocks(repository.id);
   }
 
   async deleteMemoryBlock(name: string): Promise<boolean> {
     const repository = await this.currentRepository();
-    const sql = getDb();
-    const [row] = await sql`
-      DELETE FROM memory_blocks WHERE repository_id = ${repository.id} AND name = ${name} RETURNING id
-    `;
-    return !!row;
+    return this.memories.deleteBlock(repository.id, name);
+  }
+
+  getAdminAnalytics(days: number) {
+    return this.memories.adminAnalytics(days);
+  }
+
+  listAdminMemories(filters: { limit: number; offset: number; search?: string; memoryType?: string; repository?: string }) {
+    return this.memories.adminListMemories(filters);
+  }
+
+  getAdminMemoryDetail(id: string) {
+    return this.memories.adminMemoryDetail(id);
   }
 
   private async rememberInRepository(

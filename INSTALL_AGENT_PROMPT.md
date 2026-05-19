@@ -7,11 +7,11 @@ You are installing Local Memory MCP.
 
 Goal:
 - Install one shared Local Memory MCP on this machine.
-- Install one local PostgreSQL database with pgvector.
+- Use one local SQLite database file.
 - Configure the current agent host to use this MCP globally.
 - Install the Local Memory Agent Contract in the current host's global
   rules/instructions store.
-- Verify Postgres, MCP tools, Web UI, Admin UI, and installed rules.
+- Verify SQLite, MCP tools, Web UI, Admin UI, and installed rules.
 
 Repository:
 https://github.com/ARQAWA/local-memory-mcp
@@ -32,8 +32,8 @@ Install path:
 Command:
 `$HOME/.local/bin/local-memory-mcp`
 
-Database URL:
-`postgres://local_memory:local_memory@127.0.0.1:55432/local_memory`
+Database file:
+`$HOME/.local/share/local-memory-mcp/local-memory.sqlite3`
 
 Local URLs:
 - `http://127.0.0.1:13765/ui`
@@ -45,6 +45,7 @@ Rules:
 - Do not clone into an application repository.
 - Do not expose the web server outside localhost.
 - Keep `LOCAL_MEMORY_HOST=127.0.0.1`.
+- Use `LOCAL_MEMORY_DB_PATH` only when the default database path must change.
 - Use `OPENROUTER_API_KEY` for embeddings.
 - Do not print secret values.
 
@@ -62,17 +63,17 @@ Steps:
 6. Run `pnpm exec eslint src tests --max-warnings=0`.
 7. Run `pnpm test`.
 8. Build with `pnpm run build`.
-9. Start local Postgres with `./scripts/local-postgres.sh start`.
-10. Run migrations with `pnpm run migrate`.
-11. Link command wrappers into `$HOME/.local/bin`.
-12. Configure a global MCP server named `local-memory`.
-13. Install the managed contract below into the host global rules.
-14. Start/restart `local-memory-web`.
-15. Verify Web UI and Admin UI.
-16. Start a fresh agent/MCP session and verify tool schemas.
+9. Run migrations with `pnpm run migrate`.
+10. Link command wrappers into `$HOME/.local/bin`.
+11. Configure a global MCP server named `local-memory`.
+12. Install the managed contract below into the host global rules.
+13. Start/restart `local-memory-web`.
+14. Verify Web UI and Admin UI.
+15. Start a fresh agent/MCP session and verify tool schemas.
 
 Install checks:
 - `dist` must be freshly built after `rm -rf dist`.
+- The database file must exist after migrations.
 - `/api/repositories` must exist.
 - `/api/stats?repository_mode=all` must work.
 - Existing repository rows must have non-null `root_path`, SHA-256 `root_hash`,
@@ -98,8 +99,8 @@ This contract applies only when Local Memory MCP tools are installed and
 available in the current session. If they are unavailable, continue without
 memory and do not invent memory results.
 
-One machine has one shared Local Memory MCP and one shared local Postgres
-database. Do not create per-agent or per-repository databases.
+One machine has one shared Local Memory MCP and one shared local SQLite
+database file. Do not create per-agent or per-repository databases.
 
 Memory is stored globally on the host, but every memory belongs to exactly one
 repository. Default reads and writes use the current project. The current
@@ -128,8 +129,7 @@ Graph and relation rules:
 
 - use `link_memories` only for explicit, useful, current-repository
   relationships;
-- do not link memories just because they share a tag, file, entity, topic, or
-  search result;
+- do not link memories just because they share a tag;
 - before `link_memories`, verify both IDs belong to the current repository;
 - use `depends_on` when one memory needs another to be used safely;
 - use `implements` when one memory implements a decision, convention, or plan;

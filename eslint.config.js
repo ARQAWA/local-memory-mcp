@@ -31,7 +31,7 @@ export default tseslint.config(
     },
   },
   {
-    // Database connection — uses dynamic tagged-template SQL APIs
+    // Database connection — typed sync wrapper around node:sqlite.
     files: ["src/db/connection.ts"],
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
@@ -40,6 +40,14 @@ export default tseslint.config(
       "@typescript-eslint/no-unsafe-return": "off",
       "@typescript-eslint/no-unsafe-argument": "off",
       "@typescript-eslint/no-unsafe-call": "off",
+      "@typescript-eslint/no-unnecessary-type-parameters": "off",
+    },
+  },
+  {
+    // SQLite calls are sync, but repositories keep async public contracts.
+    files: ["src/repositories/**/*.ts", "src/api/admin-routes.ts"],
+    rules: {
+      "@typescript-eslint/require-await": "off",
     },
   },
   {

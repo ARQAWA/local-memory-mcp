@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { getDb } from "../db/connection.js";
 import { dbQuery } from "../errors.js";
 import type { SqlProvider } from "./memory.repository.js";
@@ -10,6 +11,11 @@ export interface AuditEntry {
   actor: string;
   changes: Record<string, unknown> | null;
   created_at: Date;
+}
+
+interface AuditRow extends Omit<AuditEntry, "changes" | "created_at"> {
+  changes: string | null;
+  created_at: string;
 }
 
 function parseChanges(raw: unknown): Record<string, unknown> | null {
@@ -25,8 +31,8 @@ function parseChanges(raw: unknown): Record<string, unknown> | null {
   return null;
 }
 
-function normalizeAuditRows(rows: AuditEntry[]): AuditEntry[] {
-  return rows.map((r) => ({ ...r, changes: parseChanges(r.changes) }));
+function normalizeAuditRows(rows: AuditRow[]): AuditEntry[] {
+  return rows.map((row) => ({ ...row, changes: parseChanges(row.changes), created_at: new Date(row.created_at) }));
 }
 
 export class AuditRepository {
@@ -48,31 +54,29 @@ export class AuditRepository {
     changes?: Record<string, unknown>;
   }): Promise<void> {
     return dbQuery("AuditRepository.log", async () => {
-      const sql = this.getSql();
-      const changesJson = data.changes ? JSON.stringify(data.changes) : null;
-      await sql`
-        INSERT INTO audit_log (id, repository_id, memory_id, action, actor, changes)
-        VALUES (
-          gen_random_uuid(),
-          ${data.repository_id},
-          ${data.memory_id},
-          ${data.action},
-          ${data.actor},
-          ${changesJson}::jsonb
-        )
-      `;
+      this.getSql().run(
+        `INSERT INTO audit_log (id, repository_id, memory_id, action, actor, changes)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          randomUUID(),
+          data.repository_id,
+          data.memory_id,
+          data.action,
+          data.actor,
+          data.changes ? JSON.stringify(data.changes) : null,
+        ],
+      );
     });
   }
 
   async getRecent(limit = 50, repositoryId?: string): Promise<AuditEntry[]> {
-    const sql = this.getSql();
-    const repositoryFilter = repositoryId ? sql`WHERE repository_id = ${repositoryId}` : sql``;
-    const rows = await sql<AuditEntry[]>`
-      SELECT * FROM audit_log
-      ${repositoryFilter}
-      ORDER BY created_at DESC
-      LIMIT ${limit}
-    `;
+    const rows = this.getSql().all<AuditRow>(
+      `SELECT * FROM audit_log
+       ${repositoryId ? "WHERE repository_id = ?" : ""}
+       ORDER BY created_at DESC
+       LIMIT ?`,
+      repositoryId ? [repositoryId, limit] : [limit],
+    );
     return normalizeAuditRows(rows);
   }
 }

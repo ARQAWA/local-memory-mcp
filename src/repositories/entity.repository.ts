@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { getDb } from "../db/connection.js";
 import { DatabaseError, dbQuery } from "../errors.js";
 import type { SqlProvider } from "./memory.repository.js";
@@ -29,6 +30,42 @@ export interface EntityWithMemoryCount extends Entity {
   memory_count: number;
 }
 
+interface EntityRow extends Omit<Entity, "metadata" | "created_at" | "updated_at"> {
+  pk: number;
+  metadata: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface EntityRelationRow extends Omit<EntityRelation, "created_at"> {
+  created_at: string;
+}
+
+function parseMetadata(raw: string | null): Record<string, string | number | boolean | null> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, string | number | boolean | null>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function toEntity(row: EntityRow): Entity {
+  const { pk: _pk, metadata, created_at, updated_at, ...rest } = row;
+  return { ...rest, metadata: parseMetadata(metadata), created_at: new Date(created_at), updated_at: new Date(updated_at) };
+}
+
+function toRelation(row: EntityRelationRow): EntityRelation {
+  return { ...row, created_at: new Date(row.created_at) };
+}
+
+function placeholders(values: readonly unknown[]): string {
+  return values.map(() => "?").join(", ");
+}
+
 export class EntityRepository {
   private getSql: SqlProvider;
 
@@ -42,39 +79,46 @@ export class EntityRepository {
 
   async findOrCreate(name: string, entityType: EntityType, repositoryId: string): Promise<Entity> {
     return dbQuery(`EntityRepository.findOrCreate(${name})`, async () => {
-      const sql = this.getSql();
-      const [row] = await sql<Entity[]>`
-        INSERT INTO entities (id, repository_id, name, entity_type)
-        VALUES (gen_random_uuid(), ${repositoryId}, ${name}, ${entityType})
-        ON CONFLICT (repository_id, entity_type, name)
-        DO UPDATE SET updated_at = now()
-        RETURNING *
-      `;
+      const db = this.getSql();
+      const id = randomUUID();
+      db.run(
+        `INSERT INTO entities (id, repository_id, name, entity_type)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(repository_id, entity_type, name)
+         DO UPDATE SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+        [id, repositoryId, name, entityType],
+      );
+      const row = db.get<EntityRow>(
+        "SELECT * FROM entities WHERE repository_id = ? AND entity_type = ? AND name = ?",
+        [repositoryId, entityType, name],
+      );
       if (!row) throw new DatabaseError("Failed to find or create entity");
-      return row;
+      return toEntity(row);
     });
   }
 
   async linkMemory(memoryId: string, entityId: string, relevance = 1.0, repositoryId: string): Promise<void> {
-    const sql = this.getSql();
-    const [check] = await sql<{ ok: boolean }[]>`
-      SELECT (
+    const db = this.getSql();
+    const check = db.get<{ ok: number }>(
+      `SELECT (
         EXISTS(
           SELECT 1 FROM memories
-          WHERE id = ${memoryId} AND repository_id = ${repositoryId} AND deleted_at IS NULL
+          WHERE id = ? AND repository_id = ? AND deleted_at IS NULL
         )
         AND EXISTS(
           SELECT 1 FROM entities
-          WHERE id = ${entityId} AND repository_id = ${repositoryId}
+          WHERE id = ? AND repository_id = ?
         )
-      ) AS ok
-    `;
+      ) AS ok`,
+      [memoryId, repositoryId, entityId, repositoryId],
+    );
     if (!check?.ok) return;
-    await sql`
-      INSERT INTO memory_entities (memory_id, repository_id, entity_id, relevance)
-      VALUES (${memoryId}, ${repositoryId}, ${entityId}, ${relevance})
-      ON CONFLICT (memory_id, entity_id) DO UPDATE SET relevance = ${relevance}
-    `;
+    db.run(
+      `INSERT INTO memory_entities (memory_id, repository_id, entity_id, relevance)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(memory_id, entity_id) DO UPDATE SET relevance = excluded.relevance`,
+      [memoryId, repositoryId, entityId, relevance],
+    );
   }
 
   async createRelation(data: {
@@ -85,37 +129,36 @@ export class EntityRepository {
     description?: string;
     memoryId?: string;
   }): Promise<EntityRelation> {
-    const sql = this.getSql();
-    const [check] = await sql<{ ok: boolean }[]>`
-      SELECT (
-        EXISTS(SELECT 1 FROM entities WHERE id = ${data.sourceId} AND repository_id = ${data.repositoryId})
-        AND EXISTS(SELECT 1 FROM entities WHERE id = ${data.targetId} AND repository_id = ${data.repositoryId})
-      ) AS ok
-    `;
+    const db = this.getSql();
+    const check = db.get<{ ok: number }>(
+      `SELECT (
+        EXISTS(SELECT 1 FROM entities WHERE id = ? AND repository_id = ?)
+        AND EXISTS(SELECT 1 FROM entities WHERE id = ? AND repository_id = ?)
+      ) AS ok`,
+      [data.sourceId, data.repositoryId, data.targetId, data.repositoryId],
+    );
     if (!check?.ok) {
       throw new DatabaseError("Cannot create relation: entities must belong to the same repository");
     }
-    const [row] = await sql<EntityRelation[]>`
-      INSERT INTO entity_relations (
-        id, repository_id, source_entity_id, target_entity_id, relation_type, description, memory_id
-      )
-      VALUES (
-        gen_random_uuid(),
-        ${data.repositoryId},
-        ${data.sourceId},
-        ${data.targetId},
-        ${data.relationType},
-        ${data.description ?? null},
-        ${data.memoryId ?? null}
-      )
-      ON CONFLICT (repository_id, source_entity_id, target_entity_id, relation_type)
-      DO UPDATE SET
-        description = COALESCE(${data.description ?? null}, entity_relations.description),
-        memory_id = COALESCE(${data.memoryId ?? null}, entity_relations.memory_id)
-      RETURNING *
-    `;
+    const id = randomUUID();
+    db.run(
+      `INSERT INTO entity_relations (
+         id, repository_id, source_entity_id, target_entity_id, relation_type, description, memory_id
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(repository_id, source_entity_id, target_entity_id, relation_type)
+       DO UPDATE SET
+         description = COALESCE(excluded.description, entity_relations.description),
+         memory_id = COALESCE(excluded.memory_id, entity_relations.memory_id)`,
+      [id, data.repositoryId, data.sourceId, data.targetId, data.relationType, data.description ?? null, data.memoryId ?? null],
+    );
+    const row = db.get<EntityRelationRow>(
+      `SELECT * FROM entity_relations
+       WHERE repository_id = ? AND source_entity_id = ? AND target_entity_id = ? AND relation_type = ?`,
+      [data.repositoryId, data.sourceId, data.targetId, data.relationType],
+    );
     if (!row) throw new DatabaseError("Failed to create entity relation");
-    return row;
+    return toRelation(row);
   }
 
   async searchByName(
@@ -124,61 +167,73 @@ export class EntityRepository {
     limit = 10,
     entityType?: EntityType,
   ): Promise<EntityWithMemoryCount[]> {
-    const sql = this.getSql();
-    const pattern = `%${query.replace(/[%_\\]/g, "\\$&")}%`;
-    const typeFilter = entityType ? sql`AND e.entity_type = ${entityType}` : sql``;
-    return sql<EntityWithMemoryCount[]>`
-      WITH matched AS MATERIALIZED (
-        SELECT e.*
-        FROM entities e
-        WHERE e.repository_id = ${repositoryId}
-          AND e.name ILIKE ${pattern} ESCAPE '\\'
-          ${typeFilter}
-      ),
-      counts AS (
-        SELECT me.entity_id, COUNT(*)::int AS memory_count
-        FROM memory_entities me
-        JOIN matched e ON e.id = me.entity_id
-        JOIN memories m ON m.id = me.memory_id
-         AND m.repository_id = ${repositoryId}
-         AND m.deleted_at IS NULL
-         AND m.valid_until IS NULL
-         AND (m.expires_at IS NULL OR m.expires_at > now())
-        WHERE me.repository_id = ${repositoryId}
-        GROUP BY me.entity_id
-      )
-      SELECT matched.*,
-        COALESCE(c.memory_count, 0)::int AS memory_count
-      FROM matched
-      LEFT JOIN counts c ON c.entity_id = matched.id
-      ORDER BY memory_count DESC
-      LIMIT ${limit}
-    `;
+    const db = this.getSql();
+    const pattern = `%${query.replaceAll("%", " ")}%`;
+    const params: (string | number)[] = [repositoryId, pattern];
+    let typeFilter = "";
+    if (entityType) {
+      typeFilter = "AND e.entity_type = ?";
+      params.push(entityType);
+    }
+    const rows = db.all<EntityRow & { memory_count: number }>(
+      `WITH matched AS (
+         SELECT e.*
+         FROM entities e
+         JOIN entities_fts ef ON ef.rowid = e.pk
+         WHERE e.repository_id = ?
+           AND ef.name LIKE ?
+           ${typeFilter}
+       ),
+       counts AS (
+         SELECT me.entity_id, COUNT(*) AS memory_count
+         FROM memory_entities me
+         JOIN matched e ON e.id = me.entity_id
+         JOIN memories m
+           ON m.id = me.memory_id
+          AND m.repository_id = ?
+          AND m.deleted_at IS NULL
+          AND m.valid_until IS NULL
+          AND (m.expires_at IS NULL OR m.expires_at > ?)
+         WHERE me.repository_id = ?
+         GROUP BY me.entity_id
+       )
+       SELECT matched.*, COALESCE(c.memory_count, 0) AS memory_count
+       FROM matched
+       LEFT JOIN counts c ON c.entity_id = matched.id
+       ORDER BY memory_count DESC
+       LIMIT ?`,
+      [...params, repositoryId, new Date().toISOString(), repositoryId, limit],
+    );
+    return rows.map((row) => ({ ...toEntity(row), memory_count: row.memory_count }));
   }
 
   async listEntities(repositoryId: string, entityType?: EntityType, limit = 50): Promise<EntityWithMemoryCount[]> {
-    const sql = this.getSql();
-    const typeFilter = entityType ? sql`AND e.entity_type = ${entityType}` : sql``;
-    return sql<EntityWithMemoryCount[]>`
-      WITH counts AS (
-        SELECT me.entity_id, COUNT(*)::int AS memory_count
-        FROM memory_entities me
-        JOIN memories m ON m.id = me.memory_id
-         AND m.repository_id = ${repositoryId}
-         AND m.deleted_at IS NULL
-         AND m.valid_until IS NULL
-         AND (m.expires_at IS NULL OR m.expires_at > now())
-        WHERE me.repository_id = ${repositoryId}
-        GROUP BY me.entity_id
-      )
-      SELECT e.*,
-        COALESCE(c.memory_count, 0)::int AS memory_count
-      FROM entities e
-      LEFT JOIN counts c ON c.entity_id = e.id
-      WHERE e.repository_id = ${repositoryId} ${typeFilter}
-      ORDER BY memory_count DESC
-      LIMIT ${limit}
-    `;
+    const params: (string | number)[] = [repositoryId, new Date().toISOString(), repositoryId];
+    const typeFilter = entityType ? "AND e.entity_type = ?" : "";
+    if (entityType) params.push(entityType);
+    params.push(limit);
+    const rows = this.getSql().all<EntityRow & { memory_count: number }>(
+      `WITH counts AS (
+         SELECT me.entity_id, COUNT(*) AS memory_count
+         FROM memory_entities me
+         JOIN memories m
+           ON m.id = me.memory_id
+          AND m.repository_id = ?
+          AND m.deleted_at IS NULL
+          AND m.valid_until IS NULL
+          AND (m.expires_at IS NULL OR m.expires_at > ?)
+         WHERE me.repository_id = ?
+         GROUP BY me.entity_id
+       )
+       SELECT e.*, COALESCE(c.memory_count, 0) AS memory_count
+       FROM entities e
+       LEFT JOIN counts c ON c.entity_id = e.id
+       WHERE e.repository_id = ? ${typeFilter}
+       ORDER BY memory_count DESC
+       LIMIT ?`,
+      [...params.slice(0, 3), repositoryId, ...params.slice(3)],
+    );
+    return rows.map((row) => ({ ...toEntity(row), memory_count: row.memory_count }));
   }
 
   async findSoftRelatedMemories(
@@ -187,35 +242,35 @@ export class EntityRepository {
     limit = 10,
   ): Promise<{ memory_id: string; shared_entities: string[]; score: number }[]> {
     if (memoryIds.length === 0) return [];
-    const sql = this.getSql();
-    const rows = await sql<{ memory_id: string; shared_entities: string[] | string; score: string }[]>`
-      SELECT me2.memory_id,
-        ARRAY_AGG(DISTINCT e.entity_type || ':' || e.name ORDER BY e.entity_type || ':' || e.name) AS shared_entities,
-        SUM(me1.relevance * me2.relevance)::text AS score
-      FROM memory_entities me1
-      JOIN memory_entities me2
-        ON me2.repository_id = me1.repository_id
-       AND me2.entity_id = me1.entity_id
-       AND me2.memory_id <> ALL(${memoryIds})
-      JOIN entities e
-        ON e.id = me1.entity_id
-       AND e.repository_id = ${repositoryId}
-      JOIN memories m
-        ON m.id = me2.memory_id
-       AND m.repository_id = ${repositoryId}
-       AND m.deleted_at IS NULL
-       AND m.valid_until IS NULL
-       AND (m.expires_at IS NULL OR m.expires_at > now())
-      WHERE me1.repository_id = ${repositoryId}
-        AND me1.memory_id = ANY(${memoryIds})
-      GROUP BY me2.memory_id
-      ORDER BY SUM(me1.relevance * me2.relevance) DESC, COUNT(*) DESC
-      LIMIT ${limit}
-    `;
+    const rows = this.getSql().all<{ memory_id: string; shared_entities: string | null; score: number }>(
+      `SELECT me2.memory_id,
+        json_group_array(DISTINCT e.entity_type || ':' || e.name) AS shared_entities,
+        SUM(me1.relevance * me2.relevance) AS score
+       FROM memory_entities me1
+       JOIN memory_entities me2
+         ON me2.repository_id = me1.repository_id
+        AND me2.entity_id = me1.entity_id
+        AND me2.memory_id NOT IN (${placeholders(memoryIds)})
+       JOIN entities e
+         ON e.id = me1.entity_id
+        AND e.repository_id = ?
+       JOIN memories m
+         ON m.id = me2.memory_id
+        AND m.repository_id = ?
+        AND m.deleted_at IS NULL
+        AND m.valid_until IS NULL
+        AND (m.expires_at IS NULL OR m.expires_at > ?)
+       WHERE me1.repository_id = ?
+         AND me1.memory_id IN (${placeholders(memoryIds)})
+       GROUP BY me2.memory_id
+       ORDER BY SUM(me1.relevance * me2.relevance) DESC, COUNT(*) DESC
+       LIMIT ?`,
+      [...memoryIds, repositoryId, repositoryId, new Date().toISOString(), repositoryId, ...memoryIds, limit],
+    );
     return rows.map((row) => ({
       memory_id: row.memory_id,
-      shared_entities: Array.isArray(row.shared_entities) ? row.shared_entities : [],
-      score: Number(row.score) || 0,
+      shared_entities: row.shared_entities ? (JSON.parse(row.shared_entities) as string[]) : [],
+      score: row.score || 0,
     }));
   }
 }

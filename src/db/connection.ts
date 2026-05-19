@@ -1,57 +1,131 @@
-import postgres from "postgres";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { DatabaseSync, type StatementSync } from "node:sqlite";
+import { load as loadSqliteVec } from "sqlite-vec";
 import { loadConfig } from "../config.js";
 import { DatabaseError } from "../errors.js";
 
-let sql: postgres.Sql | null = null;
+type SqlParam = string | number | bigint | Buffer | null;
+type SqlParams = SqlParam[];
 
-export function getDb(): postgres.Sql {
-  if (sql) return sql;
+export interface RunResult {
+  changes: number;
+  lastInsertRowid: number | bigint;
+}
+
+export class LocalDatabase {
+  private readonly db: DatabaseSync;
+  private inTransaction = false;
+
+  constructor(db: DatabaseSync) {
+    this.db = db;
+  }
+
+  exec(sql: string): void {
+    this.db.exec(sql);
+  }
+
+  prepare(sql: string): StatementSync {
+    return this.db.prepare(sql);
+  }
+
+  all<T>(sql: string, params: SqlParams = []): T[] {
+    return this.prepare(sql).all(...params) as T[];
+  }
+
+  get<T>(sql: string, params: SqlParams = []): T | undefined {
+    return this.prepare(sql).get(...params) as T | undefined;
+  }
+
+  run(sql: string, params: SqlParams = []): RunResult {
+    const result = this.prepare(sql).run(...params);
+    return {
+      changes: Number(result.changes),
+      lastInsertRowid: result.lastInsertRowid,
+    };
+  }
+
+  transaction<T>(fn: (tx: LocalDatabase) => T): T {
+    if (this.inTransaction) return fn(this);
+    this.inTransaction = true;
+    this.exec("BEGIN IMMEDIATE");
+    try {
+      const result = fn(this);
+      this.exec("COMMIT");
+      return result;
+    } catch (err) {
+      try {
+        this.exec("ROLLBACK");
+      } finally {
+        this.inTransaction = false;
+      }
+      throw err;
+    } finally {
+      this.inTransaction = false;
+    }
+  }
+
+  async transactionAsync<T>(fn: (tx: LocalDatabase) => Promise<T>): Promise<T> {
+    if (this.inTransaction) return fn(this);
+    this.inTransaction = true;
+    this.exec("BEGIN IMMEDIATE");
+    try {
+      const result = await fn(this);
+      this.exec("COMMIT");
+      return result;
+    } catch (err) {
+      try {
+        this.exec("ROLLBACK");
+      } finally {
+        this.inTransaction = false;
+      }
+      throw err;
+    } finally {
+      this.inTransaction = false;
+    }
+  }
+
+  close(): void {
+    this.db.close();
+  }
+}
+
+let database: LocalDatabase | null = null;
+
+export function getDb(): LocalDatabase {
+  if (database) return database;
 
   const config = loadConfig();
-  if (!config.databaseUrl) {
-    throw new DatabaseError("LOCAL_MEMORY_DATABASE_URL or DATABASE_URL is required");
+  mkdirSync(dirname(config.databasePath), { recursive: true });
+  const raw = new DatabaseSync(config.databasePath, { allowExtension: true });
+  if (config.sqliteExtensionPath) {
+    raw.loadExtension(config.sqliteExtensionPath);
+  } else {
+    loadSqliteVec(raw);
   }
+  raw.enableLoadExtension(false);
+  raw.exec("PRAGMA foreign_keys = ON");
+  raw.exec("PRAGMA journal_mode = WAL");
+  raw.exec("PRAGMA synchronous = NORMAL");
+  raw.exec("PRAGMA busy_timeout = 5000");
 
-  sql = postgres(config.databaseUrl, {
-    max: 10,
-    idle_timeout: 30,
-    connect_timeout: 10,
-    max_lifetime: 300,
-    ssl: false,
-    types: {
-      bigint: postgres.BigInt,
-    },
-    onnotice: () => {},
-    connection: {
-      "hnsw.ef_search": "100",
-      statement_timeout: 30000,
-    },
-  });
-
-  tryEnablePgvectorTuning(sql).catch(() => {});
-  return sql;
+  database = new LocalDatabase(raw);
+  return database;
 }
 
-async function tryEnablePgvectorTuning(db: postgres.Sql): Promise<void> {
-  try {
-    await db`SET hnsw.iterative_scan = 'relaxed_order'`;
-  } catch {
-    // pgvector < 0.7 does not support this setting.
-  }
-}
-
-interface Transactable {
-  begin<T>(fn: (tx: unknown) => Promise<T>): Promise<T>;
-}
-
-export async function withTransaction<T>(fn: (txSql: ReturnType<typeof getDb>) => Promise<T>): Promise<T> {
+export function withTransaction<T>(fn: (txSql: ReturnType<typeof getDb>) => Promise<T>): Promise<T> {
   const db = getDb();
-  return (db as unknown as Transactable).begin((txSql) => fn(txSql as ReturnType<typeof getDb>));
+  return db.transactionAsync(() => fn(db));
 }
 
-export async function closeDb(): Promise<void> {
-  if (sql) {
-    await sql.end();
-    sql = null;
+export function closeDb(): Promise<void> {
+  if (database) {
+    database.close();
+    database = null;
   }
+  return Promise.resolve();
+}
+
+export function asDatabaseError(label: string, err: unknown): DatabaseError {
+  return new DatabaseError(label, err instanceof Error ? err : undefined);
 }

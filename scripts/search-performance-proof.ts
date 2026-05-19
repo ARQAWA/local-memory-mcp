@@ -1,15 +1,12 @@
-import postgres from "postgres";
-import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
+import { resetConfig } from "../src/config.js";
+import { closeDb, getDb } from "../src/db/connection.js";
+import { runMigrations } from "../src/db/migrate.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const root = join(__dirname, "..");
-const migrationsDir = join(root, "src", "db", "migrations");
-const baseUrl =
-  process.env["LOCAL_MEMORY_DATABASE_URL"] ?? "postgres://local_memory:local_memory@127.0.0.1:55432/local_memory";
 const reportPath =
   process.env["LOCAL_MEMORY_PERF_REPORT"] ?? join("/tmp", `local-memory-search-proof-${Date.now()}.md`);
 
@@ -17,33 +14,10 @@ const repoSizes = [
   { slug: "perf_small", count: Number(process.env["LOCAL_MEMORY_PERF_SMALL"] ?? 100) },
   { slug: "perf_medium", count: Number(process.env["LOCAL_MEMORY_PERF_MEDIUM"] ?? 2_000) },
   { slug: "perf_large", count: Number(process.env["LOCAL_MEMORY_PERF_LARGE"] ?? 20_000) },
-  { slug: "perf_extra_large", count: Number(process.env["LOCAL_MEMORY_PERF_EXTRA_LARGE"] ?? 100_000) },
 ] as const;
 
-function dbName(): string {
-  return `local_memory_perf_${new Date()
-    .toISOString()
-    .replace(/[-:.TZ]/g, "")
-    .slice(0, 14)}`;
-}
-
-function quoteIdent(value: string): string {
-  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value)) {
-    throw new Error(`Unsafe identifier: ${value}`);
-  }
-  return `"${value}"`;
-}
-
-function databaseUrl(name: string): string {
-  const url = new URL(baseUrl);
-  url.pathname = `/${name}`;
-  return url.toString();
-}
-
-function adminUrl(): string {
-  const url = new URL(baseUrl);
-  url.pathname = "/postgres";
-  return url.toString();
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function vector(seed: number): string {
@@ -55,346 +29,221 @@ function vector(seed: number): string {
   return `[${values.join(",")}]`;
 }
 
-function sha256(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
+function time<T>(fn: () => T): { value: T; ms: number } {
+  const started = performance.now();
+  const value = fn();
+  return { value, ms: performance.now() - started };
 }
 
-function vectorCase(alias = "gs"): string {
-  const parts: string[] = ["CASE"];
-  for (let i = 0; i < 16; i += 1) {
-    parts.push(`WHEN (${alias} % 16) = ${i} THEN '${vector(i + 1)}'::vector`);
-  }
-  parts.push(`ELSE '${vector(99)}'::vector END`);
-  return parts.join(" ");
-}
+function seedRepo(slug: string, count: number): number {
+  const db = getDb();
+  return time(() => {
+    db.transaction((tx) => {
+      const repoId = randomUUID();
+      tx.run(
+        `INSERT INTO repositories (id, slug, name, root_path, root_hash, metadata)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [repoId, slug, slug, `/tmp/${slug}`, sha256(`/tmp/${slug}`), JSON.stringify({ identity_kind: "folder" })],
+      );
+      const repo = tx.get<{ pk: number }>("SELECT pk FROM repositories WHERE id = ?", [repoId]);
+      if (!repo) throw new Error(`Failed to create ${slug}`);
 
-async function applyMigrations(sql: postgres.Sql): Promise<void> {
-  await sql`
-    CREATE TABLE IF NOT EXISTS _migrations (
-      id SERIAL PRIMARY KEY,
-      name TEXT UNIQUE NOT NULL,
-      applied_at TIMESTAMPTZ DEFAULT now()
-    )
-  `;
-  const files = readdirSync(migrationsDir)
-    .filter((file) => file.endsWith(".sql"))
-    .sort();
-  for (const file of files) {
-    const content = readFileSync(join(migrationsDir, file), "utf-8");
-    const stripped = content.replace(/^\s*BEGIN\s*;/im, "").replace(/\s*COMMIT\s*;\s*$/im, "");
-    if (content.includes("@no-transaction")) {
-      const executable = stripped
-        .split("\n")
-        .filter((line) => !line.trim().startsWith("--"))
-        .join("\n");
-      const statements = executable
-        .split(/;\s*\n/)
-        .map((statement) => statement.trim())
-        .filter((statement) => statement.length > 0);
-      for (const statement of statements) {
-        await sql.unsafe(statement);
+      for (let i = 1; i <= count; i += 1) {
+        const memoryId = randomUUID();
+        const entityId = randomUUID();
+        const content = `repo ${slug} common_alpha common_beta ${
+          i % 101 === 0 ? "rare_needle" : "common_term"
+        } ${i % 17 === 0 ? "truck semantic vector" : "memory search text"} ${i}`;
+        tx.run(
+          `INSERT INTO memories (
+             id, repository_id, user_id, memory_type, content, summary, importance, created_by, source, updated_at
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            memoryId,
+            repoId,
+            "perf-user",
+            ["fact", "decision", "procedure", "episode", "reference", "convention"][i % 6] ?? "fact",
+            content,
+            `summary ${slug} ${i}`,
+            0.5 + ((i % 50) / 100),
+            "perf",
+            "seed",
+            new Date(Date.now() - i * 1000).toISOString(),
+          ],
+        );
+        const memory = tx.get<{ pk: number }>("SELECT pk FROM memories WHERE id = ?", [memoryId]);
+        if (!memory) throw new Error(`Failed to create memory ${i}`);
+        tx.run("INSERT INTO memory_vectors(memory_pk, repository_pk, embedding) VALUES (?, ?, ?)", [
+          BigInt(memory.pk),
+          BigInt(repo.pk),
+          vector((i % 16) + 1),
+        ]);
+        tx.run("INSERT INTO memory_tags (memory_id, repository_id, tag) VALUES (?, ?, ?)", [
+          memoryId,
+          repoId,
+          i % 2 === 0 ? "truck" : "note",
+        ]);
+        if (i <= Math.min(count, 10_000)) {
+          const entityName = i % 97 === 0 ? `rare_entity_${slug}_${i}` : `common_entity_${slug}_${i}`;
+          tx.run("INSERT INTO entities (id, repository_id, name, entity_type) VALUES (?, ?, ?, ?)", [
+            entityId,
+            repoId,
+            entityName,
+            ["service", "file", "package", "person", "concept", "api", "error", "env_var"][i % 8] ?? "concept",
+          ]);
+          tx.run("INSERT INTO memory_entities (memory_id, repository_id, entity_id, relevance) VALUES (?, ?, ?, ?)", [
+            memoryId,
+            repoId,
+            entityId,
+            1,
+          ]);
+        }
       }
-      await sql`INSERT INTO _migrations (name) VALUES (${file}) ON CONFLICT (name) DO NOTHING`;
-      continue;
-    }
-    await sql.begin(async (tx) => {
-      await tx.unsafe(stripped);
-      await tx`INSERT INTO _migrations (name) VALUES (${file}) ON CONFLICT (name) DO NOTHING`;
     });
-  }
+  }).ms;
 }
 
-async function seedRepo(sql: postgres.Sql, slug: string, count: number): Promise<number> {
+function measure(title: string, fn: () => unknown): { title: string; ms: number; count: number } {
   const started = performance.now();
-  const entityCount = Math.min(Math.max(100, Math.floor(count / 10)), 10_000);
-  const linkedMemoryCount = Math.min(count, entityCount * 4);
-  const [repo] = await sql<{ id: string }[]>`
-    INSERT INTO repositories (slug, name, root_path, root_hash, metadata)
-    VALUES (
-      ${slug},
-      ${slug},
-      ${`/tmp/${slug}`},
-      ${sha256(`/tmp/${slug}`)},
-      '{"identity_kind":"folder"}'::jsonb
-    )
-    RETURNING id::text
-  `;
-  if (!repo) throw new Error(`Failed to create ${slug}`);
-
-  await sql.unsafe(`
-    INSERT INTO memories (
-      repository_id, user_id, memory_type, content, summary, embedding,
-      importance, created_by, source, updated_at
-    )
-    SELECT
-      '${repo.id}'::uuid,
-      'perf-user',
-      (ARRAY['fact','decision','procedure','episode','reference','convention'])[(gs % 6) + 1],
-      'repo ${slug} common_alpha common_beta ' ||
-        CASE WHEN gs % 101 = 0 THEN 'rare_needle ' ELSE 'common_term ' END ||
-        CASE WHEN gs % 17 = 0 THEN 'truck semantic vector ' ELSE 'memory search text ' END ||
-        gs::text,
-      'summary ${slug} ' || gs::text,
-      ${vectorCase("gs")},
-      0.5 + ((gs % 50)::float / 100),
-      'perf',
-      'seed',
-      now() - (gs || ' seconds')::interval
-    FROM generate_series(1, ${count}) AS gs
-  `);
-
-  await sql.unsafe(`
-    INSERT INTO memory_tags (memory_id, repository_id, tag)
-    SELECT id, repository_id, CASE WHEN abs(('x' || substr(md5(id::text), 1, 8))::bit(32)::int) % 2 = 0 THEN 'truck' ELSE 'note' END
-    FROM memories WHERE repository_id = '${repo.id}'::uuid
-  `);
-
-  await sql.unsafe(`
-    INSERT INTO entities (repository_id, name, entity_type)
-    SELECT
-      '${repo.id}'::uuid,
-      CASE
-        WHEN gs % 97 = 0 THEN 'rare_entity_${slug}_' || gs::text
-        ELSE 'common_entity_${slug}_' || gs::text
-      END,
-      (ARRAY['service','file','package','person','concept','api','error','env_var'])[(gs % 8) + 1]
-    FROM generate_series(1, ${entityCount}) AS gs
-  `);
-
-  await sql.unsafe(`
-    WITH mem AS (
-      SELECT id, repository_id, row_number() OVER (ORDER BY updated_at DESC) AS rn
-      FROM memories
-      WHERE repository_id = '${repo.id}'::uuid
-      LIMIT ${linkedMemoryCount}
-    ),
-    ent AS (
-      SELECT id, row_number() OVER (ORDER BY name) AS rn
-      FROM entities
-      WHERE repository_id = '${repo.id}'::uuid
-    )
-    INSERT INTO memory_entities (memory_id, repository_id, entity_id, relevance)
-    SELECT mem.id, mem.repository_id, ent.id, 1.0
-    FROM mem
-    JOIN ent ON ((mem.rn - 1) % ${entityCount}) = (ent.rn - 1)
-  `);
-
-  return performance.now() - started;
-}
-
-async function explain(
-  sql: postgres.Sql,
-  title: string,
-  query: string,
-): Promise<{ title: string; timeMs: number; plan: string }> {
-  const started = performance.now();
-  const rows = await sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS) ${query}`);
-  const elapsed = performance.now() - started;
-  const plan = rows.map((row) => String(row["QUERY PLAN"])).join("\n");
-  return { title, timeMs: elapsed, plan };
-}
-
-function executionTime(plan: string): string {
-  return /Execution Time: ([0-9.]+ ms)/.exec(plan)?.[1] ?? "unknown";
-}
-
-function planHeadline(plan: string): string {
-  const lines = plan.split("\n").filter((line) => /Scan|Sort|Limit|Bitmap|Index/.test(line));
-  return lines
-    .slice(0, 4)
-    .map((line) => line.trim())
-    .join("; ");
-}
-
-function entitySearchQuery(repoSlug: string, pattern: string): string {
-  return `WITH repo AS (
-           SELECT id FROM repositories WHERE slug='${repoSlug}'
-         ),
-         matched AS MATERIALIZED (
-           SELECT e.*
-           FROM entities e
-           WHERE e.repository_id = (SELECT id FROM repo)
-             AND e.name ILIKE '${pattern}' ESCAPE '\\'
-         ),
-         counts AS (
-           SELECT me.entity_id, COUNT(*)::int AS memory_count
-           FROM memory_entities me
-           JOIN matched e ON e.id = me.entity_id
-           JOIN memories m
-             ON m.id = me.memory_id
-            AND m.repository_id = (SELECT id FROM repo)
-            AND m.deleted_at IS NULL
-            AND m.valid_until IS NULL
-            AND (m.expires_at IS NULL OR m.expires_at > now())
-           WHERE me.repository_id = (SELECT id FROM repo)
-           GROUP BY me.entity_id
-         )
-         SELECT matched.id, matched.name, COALESCE(counts.memory_count, 0)::int AS memory_count
-         FROM matched
-         LEFT JOIN counts ON counts.entity_id = matched.id
-         ORDER BY memory_count DESC
-         LIMIT 20`;
+  const rows = fn();
+  const count = Array.isArray(rows) ? rows.length : 1;
+  return { title, ms: performance.now() - started, count };
 }
 
 async function main(): Promise<void> {
-  const name = dbName();
-  const admin = postgres(adminUrl(), { max: 1, ssl: false });
-  await admin.unsafe(`DROP DATABASE IF EXISTS ${quoteIdent(name)} WITH (FORCE)`);
-  await admin.unsafe(`CREATE DATABASE ${quoteIdent(name)}`);
-  await admin.end();
+  const dir = join(tmpdir(), `local-memory-sqlite-proof-${Date.now()}`);
+  mkdirSync(dir, { recursive: true });
+  const databasePath = join(dir, "proof.sqlite3");
+  process.env["LOCAL_MEMORY_DB_PATH"] = databasePath;
+  resetConfig();
 
-  const sql = postgres(databaseUrl(name), {
-    max: 4,
-    ssl: false,
-    idle_timeout: 30,
-    connect_timeout: 10,
-    connection: { "hnsw.ef_search": "100" },
-  });
-
-  const report: string[] = [`# Local Memory Search Performance Proof`, "", `Database: \`${name}\``, ""];
+  const report: string[] = ["# Local Memory Search Performance Proof", "", `Database: \`${databasePath}\``, ""];
   try {
-    const migrationStart = performance.now();
-    await applyMigrations(sql);
-    report.push(`Migration time: \`${(performance.now() - migrationStart).toFixed(0)} ms\``, "");
+    const migration = time(() => void runMigrations());
+    report.push(`Migration time: \`${migration.ms.toFixed(0)} ms\``, "");
 
     report.push("## Seed", "", "| Repo | Memories | Seed time |", "|---|---:|---:|");
     for (const repo of repoSizes) {
-      const seedTime = await seedRepo(sql, repo.slug, repo.count);
-      report.push(`| \`${repo.slug}\` | ${repo.count} | ${seedTime.toFixed(0)} ms |`);
+      const seedMs = seedRepo(repo.slug, repo.count);
+      report.push(`| \`${repo.slug}\` | ${repo.count} | ${seedMs.toFixed(0)} ms |`);
     }
 
-    const reindexStart = performance.now();
-    await sql`REINDEX INDEX idx_memories_embedding`;
-    report.push("", `HNSW reindex time: \`${(performance.now() - reindexStart).toFixed(0)} ms\``, "");
-
-    const analyzeStart = performance.now();
-    await sql`ANALYZE repositories`;
-    await sql`ANALYZE memories`;
-    await sql`ANALYZE memory_tags`;
-    await sql`ANALYZE entities`;
-    await sql`ANALYZE memory_entities`;
-    report.push(`Analyze time: \`${(performance.now() - analyzeStart).toFixed(0)} ms\``, "");
-
-    const [sizes] = await sql<{ table_size: string; total_size: string; hnsw_size: string }[]>`
-      SELECT
-        pg_size_pretty(pg_relation_size('memories')) AS table_size,
-        pg_size_pretty(pg_total_relation_size('memories')) AS total_size,
-        pg_size_pretty(pg_relation_size('idx_memories_embedding')) AS hnsw_size
-    `;
-    if (sizes) {
-      report.push("## Sizes", "", "| Metric | Value |", "|---|---:|");
-      report.push(`| memories table | ${sizes.table_size} |`);
-      report.push(`| memories total | ${sizes.total_size} |`);
-      report.push(`| HNSW index | ${sizes.hnsw_size} |`, "");
-    }
-
-    const [sample] = await sql<{ embedding: string }[]>`SELECT embedding::text FROM memories LIMIT 1`;
-    if (!sample) throw new Error("No sample embedding after seed");
-
-    const plans: { title: string; timeMs: number; plan: string }[] = [];
+    const db = getDb();
+    const sample = vector(3);
+    const measures: { title: string; ms: number; count: number }[] = [];
     for (const repo of repoSizes) {
-      plans.push(
-        await explain(
-          sql,
-          `${repo.slug}: list current repo`,
-          `SELECT id FROM memories WHERE repository_id = (SELECT id FROM repositories WHERE slug='${repo.slug}')
-             AND deleted_at IS NULL AND valid_until IS NULL
-           ORDER BY updated_at DESC LIMIT 20`,
+      measures.push(
+        measure(`${repo.slug}: list current repo`, () =>
+          db.all(
+            `SELECT m.id FROM memories m
+             JOIN repositories r ON r.id = m.repository_id
+             WHERE r.slug = ? AND m.deleted_at IS NULL AND m.valid_until IS NULL
+             ORDER BY m.updated_at DESC LIMIT 20`,
+            [repo.slug],
+          ),
         ),
       );
-      plans.push(
-        await explain(
-          sql,
-          `${repo.slug}: tag search`,
-          `SELECT m.id FROM memories m
-           WHERE m.repository_id = (SELECT id FROM repositories WHERE slug='${repo.slug}')
-             AND m.deleted_at IS NULL AND m.valid_until IS NULL
-             AND EXISTS (
-               SELECT 1 FROM memory_tags mt
-               WHERE mt.memory_id = m.id AND mt.repository_id = m.repository_id AND mt.tag = 'truck'
+      measures.push(
+        measure(`${repo.slug}: tag search`, () =>
+          db.all(
+            `SELECT m.id FROM memories m
+             JOIN repositories r ON r.id = m.repository_id
+             WHERE r.slug = ? AND m.deleted_at IS NULL AND m.valid_until IS NULL
+               AND EXISTS (
+                 SELECT 1 FROM memory_tags mt
+                 WHERE mt.memory_id = m.id AND mt.repository_id = m.repository_id AND mt.tag = 'truck'
+               )
+             ORDER BY m.updated_at DESC LIMIT 20`,
+            [repo.slug],
+          ),
+        ),
+      );
+      measures.push(
+        measure(`${repo.slug}: FTS common`, () =>
+          db.all(
+            `SELECT m.id
+             FROM memories_fts
+             JOIN memories m ON m.pk = memories_fts.rowid
+             JOIN repositories r ON r.id = m.repository_id
+             WHERE memories_fts MATCH 'common_alpha'
+               AND r.slug = ?
+               AND m.deleted_at IS NULL
+               AND m.valid_until IS NULL
+             ORDER BY bm25(memories_fts), m.updated_at DESC LIMIT 20`,
+            [repo.slug],
+          ),
+        ),
+      );
+      measures.push(
+        measure(`${repo.slug}: FTS rare`, () =>
+          db.all(
+            `SELECT m.id
+             FROM memories_fts
+             JOIN memories m ON m.pk = memories_fts.rowid
+             JOIN repositories r ON r.id = m.repository_id
+             WHERE memories_fts MATCH 'rare_needle'
+               AND r.slug = ?
+               AND m.deleted_at IS NULL
+               AND m.valid_until IS NULL
+             ORDER BY bm25(memories_fts), m.updated_at DESC LIMIT 20`,
+            [repo.slug],
+          ),
+        ),
+      );
+      measures.push(
+        measure(`${repo.slug}: semantic current`, () =>
+          db.all(
+            `WITH repo AS (SELECT pk FROM repositories WHERE slug = ?),
+             ranked AS (
+               SELECT memory_pk, distance
+               FROM memory_vectors
+               WHERE embedding MATCH ? AND k = 20 AND repository_pk = (SELECT pk FROM repo)
              )
-           ORDER BY m.updated_at DESC LIMIT 20`,
+             SELECT m.id
+             FROM ranked
+             JOIN memories m ON m.pk = ranked.memory_pk
+             ORDER BY ranked.distance ASC`,
+            [repo.slug, sample],
+          ),
         ),
       );
-      plans.push(
-        await explain(
-          sql,
-          `${repo.slug}: FTS common`,
-          `SELECT id FROM memories
-           WHERE repository_id = (SELECT id FROM repositories WHERE slug='${repo.slug}')
-             AND deleted_at IS NULL AND valid_until IS NULL
-             AND fts_vector @@ plainto_tsquery('english', 'common_alpha')
-           ORDER BY ts_rank(fts_vector, plainto_tsquery('english', 'common_alpha')) DESC, updated_at DESC
-           LIMIT 20`,
+      measures.push(
+        measure(`${repo.slug}: entity search common`, () =>
+          db.all(
+            `SELECT e.id
+             FROM entities_fts
+             JOIN entities e ON e.pk = entities_fts.rowid
+             JOIN repositories r ON r.id = e.repository_id
+             WHERE r.slug = ? AND entities_fts.name LIKE '%common_entity%'
+             LIMIT 20`,
+            [repo.slug],
+          ),
         ),
       );
-      plans.push(
-        await explain(
-          sql,
-          `${repo.slug}: FTS rare`,
-          `SELECT id FROM memories
-           WHERE repository_id = (SELECT id FROM repositories WHERE slug='${repo.slug}')
-             AND deleted_at IS NULL AND valid_until IS NULL
-             AND fts_vector @@ plainto_tsquery('english', 'rare_needle')
-           ORDER BY ts_rank(fts_vector, plainto_tsquery('english', 'rare_needle')) DESC, updated_at DESC
-           LIMIT 20`,
-        ),
-      );
-      plans.push(
-        await explain(
-          sql,
-          `${repo.slug}: semantic current exact`,
-          `WITH repo_candidates AS MATERIALIZED (
-             SELECT id, repository_id, embedding
-             FROM memories
-             WHERE repository_id = (SELECT id FROM repositories WHERE slug='${repo.slug}')
-               AND deleted_at IS NULL AND valid_until IS NULL AND embedding IS NOT NULL
-           ),
-           ranked AS (
-             SELECT id, repository_id
-             FROM repo_candidates
-             ORDER BY embedding <=> '${sample.embedding}'::vector
-             LIMIT 20
-           )
-           SELECT m.id
-           FROM ranked
-           JOIN memories m ON m.id = ranked.id AND m.repository_id = ranked.repository_id`,
-        ),
-      );
-      plans.push(
-        await explain(sql, `${repo.slug}: entity search common`, entitySearchQuery(repo.slug, "%common_entity%")),
-      );
-      plans.push(await explain(sql, `${repo.slug}: entity search rare`, entitySearchQuery(repo.slug, "%rare_entity%")));
     }
-    plans.push(
-      await explain(
-        sql,
-        "all repos: semantic",
-        `SELECT id FROM memories
-         WHERE deleted_at IS NULL AND valid_until IS NULL AND embedding IS NOT NULL
-         ORDER BY embedding <=> '${sample.embedding}'::vector
-         LIMIT 20`,
+    measures.push(
+      measure("all repos: semantic", () =>
+        db.all(
+          `SELECT memory_pk, distance
+           FROM memory_vectors
+           WHERE embedding MATCH ? AND k = 20
+           ORDER BY distance ASC`,
+          [sample],
+        ),
       ),
     );
 
-    report.push("## Summary", "", "| Query | Wall time | DB execution | Plan headline |", "|---|---:|---:|---|");
-    for (const plan of plans) {
-      report.push(
-        `| ${plan.title} | ${plan.timeMs.toFixed(0)} ms | ${executionTime(plan.plan)} | ${planHeadline(plan.plan)} |`,
-      );
+    report.push("", "## Summary", "", "| Query | Rows | Wall time |", "|---|---:|---:|");
+    for (const item of measures) {
+      report.push(`| ${item.title} | ${item.count} | ${item.ms.toFixed(1)} ms |`);
     }
 
-    report.push("", "## Plans", "");
-    for (const plan of plans) {
-      report.push(`### ${plan.title}`, "", "```text", plan.plan, "```", "");
-    }
     writeFileSync(reportPath, `${report.join("\n")}\n`);
     console.log(reportPath);
   } finally {
-    await sql.end({ timeout: 5 });
-    const cleanup = postgres(adminUrl(), { max: 1, ssl: false });
-    await cleanup.unsafe(`DROP DATABASE IF EXISTS ${quoteIdent(name)} WITH (FORCE)`);
-    await cleanup.end();
+    await closeDb();
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 

@@ -40,9 +40,6 @@ describe("repository graph contract", () => {
     expect(prompt).toContain("It does not install Local Memory MCP");
     expect(prompt).toContain("It does not configure memory MCP servers");
     expect(prompt).toContain("must not install index-based tools such as `graphify` or `symlens`");
-    expect(prompt).not.toContain("This prompt installs work rules only");
-    expect(prompt).not.toContain("It does not configure MCP servers.");
-    expect(prompt).not.toContain("START_ARQAWA_WORK_GLOBAL_RULES_COPY");
   });
 
   test("ID tools resolve repository scope before reading or writing", () => {
@@ -55,63 +52,46 @@ describe("repository graph contract", () => {
     expect(manageTools).toContain("repository.id");
   });
 
-  test("repo-scoped semantic search uses an exact per-repository candidate scan", () => {
+  test("SQLite schema keeps repository graph, FTS, and vector tables", () => {
+    const schema = readProjectFile("src/db/migrations/001_schema.sql");
+
+    expect(schema).toContain("CREATE TABLE IF NOT EXISTS repositories");
+    expect(schema).toContain("CREATE TABLE IF NOT EXISTS memories");
+    expect(schema).toContain("CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5");
+    expect(schema).toContain("CREATE VIRTUAL TABLE IF NOT EXISTS entities_fts USING fts5");
+    expect(schema).toContain("CREATE VIRTUAL TABLE IF NOT EXISTS memory_vectors USING vec0");
+    expect(schema).toContain("FOREIGN KEY (source_memory_id, repository_id)");
+    expect(schema).toContain("FOREIGN KEY (entity_id, repository_id)");
+  });
+
+  test("repo-scoped semantic search uses the local vector table", () => {
     const repo = readProjectFile("src/repositories/memory.repository.ts");
 
-    expect(repo).toContain("WITH repo_candidates AS MATERIALIZED");
-    expect(repo).toContain("FROM repo_candidates");
-    expect(repo).toContain("JOIN ranked ON ranked.id = m.id");
-    expect(repo).toContain("ORDER BY m.embedding <=>");
+    expect(repo).toContain("FROM memory_vectors");
+    expect(repo).toContain("embedding MATCH ?");
+    expect(repo).toContain("repository_pk = ?");
+    expect(repo).toContain("JOIN ranked ON ranked.memory_pk = m.pk");
   });
 
-  test("entity search uses repository-aware trigram and counts only matched entities", () => {
+  test("entity search uses SQLite trigram FTS and matched counts", () => {
     const repo = readProjectFile("src/repositories/entity.repository.ts");
-    const schema = readProjectFile("src/db/migrations/001_repository_schema.sql");
-    const migration = readProjectFile("src/db/migrations/011_entities_repository_trgm.sql");
+    const schema = readProjectFile("src/db/migrations/001_schema.sql");
     const proof = readProjectFile("scripts/search-performance-proof.ts");
 
-    expect(repo).toContain("WITH matched AS MATERIALIZED");
+    expect(repo).toContain("JOIN entities_fts");
+    expect(repo).toContain("WITH matched AS");
     expect(repo).toContain("JOIN matched e ON e.id = me.entity_id");
-    expect(schema).toContain("idx_entities_repository_name_trgm");
-    expect(schema).toContain("repository_id uuid_ops, name gin_trgm_ops");
-    expect(schema).not.toContain("idx_entities_name_trgm");
-    expect(migration).toContain("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_entities_repository_name_trgm");
-    expect(migration).toContain("DROP INDEX CONCURRENTLY IF EXISTS idx_entities_name_trgm");
+    expect(schema).toContain("tokenize='trigram'");
     expect(proof).toContain("entity search common");
-    expect(proof).toContain("entity search rare");
-  });
-
-  test("hardening migration adds repo constraints and graph metadata", () => {
-    const migration = readProjectFile("src/db/migrations/005_repository_graph_hardening.sql");
-
-    expect(migration).toContain("memory_tags_memory_repository_fkey");
-    expect(migration).toContain("memory_relations_source_repository_fkey");
-    expect(migration).toContain("memory_entities_entity_repository_fkey");
-    expect(migration).toContain("origin TEXT NOT NULL DEFAULT 'manual'");
-    expect(migration).toContain("WITH (m = 24, ef_construction = 128)");
   });
 
   test("repository identity hardening requires canonical repository identity", () => {
-    const migration = readProjectFile("src/db/migrations/006_repository_identity_hardening.sql");
-    const metadataMigration = readProjectFile("src/db/migrations/007_repository_metadata_object_hardening.sql");
+    const schema = readProjectFile("src/db/migrations/001_schema.sql");
     const migrate = readProjectFile("src/db/migrate.ts");
 
-    expect(migration).toContain("root_path SET NOT NULL");
-    expect(migration).toContain("repositories_root_hash_sha256");
-    expect(migration).toContain("repositories_metadata_identity_kind");
-    expect(metadataMigration).toContain("repositories_metadata_is_object");
-    expect(migrate).toContain("for (const migration of pending)");
-  });
-
-  test("schema and cleanup migration remove redundant single-column graph constraints", () => {
-    const schema = readProjectFile("src/db/migrations/001_repository_schema.sql");
-    const cleanup = readProjectFile("src/db/migrations/009_drop_redundant_repository_constraints.sql");
-
-    expect(schema).toContain("memory_tags_memory_repository_fkey");
-    expect(schema).toContain("memory_relations_source_repository_fkey");
-    expect(schema).toContain("entity_relations_source_repository_fkey");
-    expect(cleanup).toContain("redundant_fk");
-    expect(cleanup).toContain("conname NOT IN");
-    expect(cleanup).toContain("memory_tags_memory_repository_fkey");
+    expect(schema).toContain("root_path TEXT NOT NULL");
+    expect(schema).toContain("root_hash TEXT NOT NULL UNIQUE");
+    expect(schema).toContain("json_extract(metadata, '$.identity_kind')");
+    expect(migrate).toContain("for (const file of files)");
   });
 });

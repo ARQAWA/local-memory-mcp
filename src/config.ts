@@ -1,6 +1,8 @@
 import { z } from "zod";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
-export const DEFAULT_DATABASE_URL = "postgres://local_memory:local_memory@127.0.0.1:55432/local_memory";
+export const DEFAULT_DATABASE_PATH = join(homedir(), ".local", "share", "local-memory-mcp", "local-memory.sqlite3");
 
 export const configSchema = z
   .object({
@@ -8,7 +10,8 @@ export const configSchema = z
     host: z.string().default("127.0.0.1"),
     nodeEnv: z.enum(["development", "production", "test"]).default("development"),
 
-    databaseUrl: z.string().default(DEFAULT_DATABASE_URL),
+    databasePath: z.string().min(1).default(DEFAULT_DATABASE_PATH),
+    sqliteExtensionPath: z.string().min(1).optional(),
 
     embeddingProvider: z.enum(["openrouter", "noop"]).default("openrouter"),
     embeddingModel: z.string().default("openai/text-embedding-3-small"),
@@ -32,7 +35,8 @@ export function loadConfig(): Config {
     port: env["LOCAL_MEMORY_PORT"] ?? env["PORT"],
     host: env["LOCAL_MEMORY_HOST"] ?? env["HOST"],
     nodeEnv: env["NODE_ENV"],
-    databaseUrl: env["LOCAL_MEMORY_DATABASE_URL"] ?? env["DATABASE_URL"],
+    databasePath: env["LOCAL_MEMORY_DB_PATH"],
+    sqliteExtensionPath: env["LOCAL_MEMORY_SQLITE_EXTENSION_PATH"],
     embeddingProvider: env["EMBEDDING_PROVIDER"],
     embeddingModel: env["EMBEDDING_MODEL"],
     embeddingDimension: env["EMBEDDING_DIMENSION"],

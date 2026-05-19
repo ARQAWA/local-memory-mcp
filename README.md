@@ -5,7 +5,7 @@ Local-only MCP memory server for AI coding agents.
 ## Model
 
 - One machine has one Local Memory MCP install.
-- One machine has one local PostgreSQL database.
+- One machine has one local SQLite database file.
 - Memory is stored globally on the host.
 - Every memory belongs to exactly one repository.
 - Normal reads and writes use the current project.
@@ -46,7 +46,7 @@ Repository identity rows are hardened:
 Search is repository-correct:
 
 - current/specific semantic search uses an exact per-repository candidate scan;
-- explicit all-repository semantic search can use the global HNSW index;
+- explicit all-repository semantic search can scan the shared vector table;
 - FTS, tags, entities, relations, and list reads keep repository-keyed indexes.
 
 The Admin UI keeps:
@@ -135,6 +135,7 @@ The installer must:
 
 - clean stale `dist` output before build;
 - run migrations;
+- create or reuse the local SQLite database file;
 - restart the active local Web server;
 - verify `/api/repositories`;
 - verify Web UI default `All repositories`;
