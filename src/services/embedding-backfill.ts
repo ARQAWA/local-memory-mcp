@@ -51,8 +51,7 @@ export async function runStartupEmbeddingCheck(): Promise<void> {
     if (nullCount > 0) {
       logger.warn(
         `Found ${String(nullCount)} of ${String(totalCount)} memories without embeddings. ` +
-          `Run the 'reembed_memories' admin tool with null_only=true to backfill, ` +
-          `or run 'engram doctor --fix'.`,
+          `Run the 'reembed_memories' admin tool with null_only=true to backfill.`,
         { nullCount, totalCount },
       );
     } else {

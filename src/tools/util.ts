@@ -1,7 +1,7 @@
 import { getRequestContext, getRequestContextOrDefault } from "../context.js";
 import { logger } from "../services/logger.js";
 import { AuthorizationError } from "../errors.js";
-import { EngramError } from "../errors.js";
+import { LocalMemoryError } from "../errors.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 /**
@@ -22,12 +22,12 @@ export function withErrorHandling<TParams = Record<string, unknown>>(
       logger.error("Tool error", {
         tool: toolName,
         error: message,
-        code: err instanceof EngramError ? err.code : undefined,
+        code: err instanceof LocalMemoryError ? err.code : undefined,
         stack: err instanceof Error ? err.stack : undefined,
         repository: ctx?.repository.repository_slug ?? null,
         user_id: ctx?.user_id ?? null,
       });
-      if (err instanceof EngramError) {
+      if (err instanceof LocalMemoryError) {
         const detail =
           "originalError" in err && err.originalError instanceof Error && err.originalError.message
             ? `: ${err.originalError.message}`

@@ -1,10 +1,8 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, join, parse } from "node:path";
-import { homedir } from "node:os";
 import { LRUCache } from "lru-cache";
-import { z } from "zod";
 
 export type ProjectIdentityKind = "git" | "folder";
 
@@ -23,10 +21,6 @@ export interface StdioIdentity {
   role: "admin" | "writer" | "reader";
 }
 
-const globalConfigSchema = z.looseObject({
-  user_id: z.string().min(1).optional(),
-});
-
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const cache = new LRUCache<string, StdioIdentity>({ max: 100, ttl: CACHE_TTL_MS });
 
@@ -42,22 +36,6 @@ function execGit(args: string[], cwd?: string): string | undefined {
       timeout: 5000,
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
-  } catch {
-    return undefined;
-  }
-}
-
-function readGlobalConfig(): z.infer<typeof globalConfigSchema> | undefined {
-  let raw: string;
-  try {
-    raw = readFileSync(join(homedir(), ".engram", "config.json"), "utf-8");
-  } catch {
-    return undefined;
-  }
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    const result = globalConfigSchema.safeParse(parsed);
-    return result.success ? result.data : undefined;
   } catch {
     return undefined;
   }
@@ -128,14 +106,12 @@ export function resolveStdioIdentity(cwd?: string): StdioIdentity {
   const cached = cache.get(effectiveCwd);
   if (cached) return cached;
 
-  const globalConfig = readGlobalConfig();
   const project = resolveProjectRoot(effectiveCwd);
   const remoteUrl = project.kind === "git" ? execGit(["remote", "get-url", "origin"], project.root) : undefined;
   const remoteName = remoteUrl ? extractRepoName(remoteUrl) : undefined;
   const rawName = remoteName ?? basename(project.root);
   const userId =
     process.env["LOCAL_MEMORY_USER"] ??
-    globalConfig?.user_id ??
     execGit(["config", "user.name"], project.root) ??
     "local-user";
   const roleEnv = process.env["LOCAL_MEMORY_ROLE"];

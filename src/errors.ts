@@ -1,9 +1,9 @@
 /**
- * Domain error hierarchy for Engram.
+ * Domain error hierarchy for Local Memory MCP.
  * Enables type-safe error handling and structured error responses.
  */
 
-export class EngramError extends Error {
+export class LocalMemoryError extends Error {
   readonly code: string;
   readonly statusCode: number;
 
@@ -15,25 +15,25 @@ export class EngramError extends Error {
   }
 }
 
-export class NotFoundError extends EngramError {
+export class NotFoundError extends LocalMemoryError {
   constructor(entity: string, id: string) {
     super(`${entity} not found: ${id}`, "NOT_FOUND", 404);
   }
 }
 
-export class ValidationError extends EngramError {
+export class ValidationError extends LocalMemoryError {
   constructor(message: string) {
     super(message, "VALIDATION_ERROR", 400);
   }
 }
 
-export class AuthorizationError extends EngramError {
+export class AuthorizationError extends LocalMemoryError {
   constructor(message = "Permission denied") {
     super(message, "AUTHORIZATION_ERROR", 403);
   }
 }
 
-export class DatabaseError extends EngramError {
+export class DatabaseError extends LocalMemoryError {
   readonly originalError?: Error | undefined;
 
   constructor(message: string, originalError?: Error) {
@@ -42,7 +42,7 @@ export class DatabaseError extends EngramError {
   }
 }
 
-export class ExternalServiceError extends EngramError {
+export class ExternalServiceError extends LocalMemoryError {
   constructor(service: string, message: string) {
     super(`${service}: ${message}`, "EXTERNAL_SERVICE_ERROR", 502);
   }

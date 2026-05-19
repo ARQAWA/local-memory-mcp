@@ -1,7 +1,7 @@
 {
   "name": "local-memory-mcp",
   "version": "0.1.0",
-  "description": "Local-only MCP memory server based on Engram with PostgreSQL, pgvector, Web UI, and Admin UI",
+  "description": "Local-only MCP memory server with PostgreSQL, pgvector, Web UI, and Admin UI",
   "type": "module",
   "main": "dist/index.js",
   "bin": {

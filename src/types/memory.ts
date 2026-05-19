@@ -246,14 +246,3 @@ export type ForgetInput = z.infer<typeof ForgetSchema>;
 export type CorrectInput = z.infer<typeof CorrectSchema>;
 export type ListMemoriesInput = z.infer<typeof ListMemoriesSchema>;
 export type SearchMemoriesInput = z.infer<typeof SearchMemoriesSchema>;
-
-export function entryTypeToMemoryType(type: string): MemoryType {
-  if (memoryTypes.includes(type as MemoryType)) return type as MemoryType;
-  if (["runbook", "process"].includes(type)) return "procedure";
-  if (type === "pattern") return "reference";
-  return "fact";
-}
-
-export function memoryTypeToEntryType(type: MemoryType): string {
-  return type;
-}

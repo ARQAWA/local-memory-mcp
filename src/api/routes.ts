@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { z } from "zod";
 import { getRequestContext } from "../context.js";
-import { EngramError, ValidationError } from "../errors.js";
+import { LocalMemoryError, ValidationError } from "../errors.js";
 import { logger } from "../services/logger.js";
 import type { MemoryService } from "../services/memory.service.js";
 import { MemoryTypeSchema, RelatedModeSchema, RepositorySelectorSchema } from "../types/memory.js";
@@ -174,7 +174,7 @@ function handleApiError(err: unknown, route: string, res: import("express").Resp
     res.status(400).json({ error: "Validation error", details: err.issues });
     return;
   }
-  if (err instanceof EngramError) {
+  if (err instanceof LocalMemoryError) {
     res.status(err.statusCode).json({ error: err.message, code: err.code });
     return;
   }
