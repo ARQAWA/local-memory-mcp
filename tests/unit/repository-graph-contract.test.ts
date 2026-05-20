@@ -87,11 +87,20 @@ describe("repository graph contract", () => {
     expect(prompt).toContain("docker-langserver");
     expect(prompt).toContain("It does not install Local Memory MCP");
     expect(prompt).toContain("It does not configure memory MCP servers");
+    expect(prompt).toContain("mcp_servers.local-memory");
+    expect(prompt).toContain("required = true");
     expect(prompt).toContain("It must preserve any existing `LOCAL_MEMORY_MCP_AGENT_CONTRACT` block");
     expect(prompt).toContain("Local Memory MCP is the agent core");
     expect(prompt).toContain("This does not disable Local Memory MCP reads");
+    expect(prompt).toContain("These efficiency rules never override required Local Memory MCP calls");
+    expect(prompt).toContain("Temporary Handoff Files");
+    expect(prompt).toContain("For simple questions");
+    expect(prompt).toContain("high-stakes claims");
+    expect(prompt).toContain("outside explicit install verification");
+    expect(prompt).toContain("$HOME/.local/share/arqawa-work/ARQAWA_WORK_GLOBAL_RULES.md");
     expect(prompt).toContain("memory coverage map and approved proof plan are closed");
     expect(prompt).toContain("must not install index-based tools such as `graphify` or `symlens`");
+    expect(prompt).not.toContain("$HOME/.local/share/local-memory-mcp/ARQAWA_WORK_GLOBAL_RULES.md");
   });
 
   test("server and tool descriptions teach the memory core workflow", () => {

@@ -22,12 +22,15 @@ Important:
 - This prompt configures host work tooling.
 - It does not install Local Memory MCP.
 - It does not configure memory MCP servers.
+- When editing Codex MCP config, it must preserve any existing
+  `mcp_servers.local-memory` block, especially `required = true`.
 - It must preserve any existing `LOCAL_MEMORY_MCP_AGENT_CONTRACT` block.
 - It must not weaken, duplicate, replace, or remove the Local Memory MCP
   contract. That contract is installed only by `INSTALL_AGENT_PROMPT.md`.
 - It must not install index-based tools such as `graphify` or `symlens`.
 - It must not create repository indexes or project config files.
-- It must not run startup health checks by default.
+- It must not run startup health checks by default outside explicit install
+  verification.
 
 Host target:
 - Codex: normally `~/.codex/AGENTS.md`.
@@ -36,7 +39,7 @@ Host target:
 - VS Code/GitHub Copilot: use user/custom instructions if available.
 - Unknown host: inspect documented user/global rules. If unsafe, write the
   compiled blocks to:
-  `$HOME/.local/share/local-memory-mcp/ARQAWA_WORK_GLOBAL_RULES.md`
+  `$HOME/.local/share/arqawa-work/ARQAWA_WORK_GLOBAL_RULES.md`
   and report that manual paste is required.
 
 Install host tools when supported:
@@ -61,6 +64,8 @@ Install host tools when supported:
   `codex mcp add ast_grep -- "$HOME/.local/bin/ast-grep-server"`
 - If a Codex MCP server already exists with the correct command, keep it.
 - If a Codex MCP server exists with a stale command, update it safely.
+- Do not remove, rename, or rewrite any existing `mcp_servers.local-memory`
+  config while configuring `probe`, `fff`, or `ast_grep`.
 
 RTK rules:
 - For Codex, create or update `$HOME/.codex/RTK.md` with concise RTK usage
@@ -236,6 +241,8 @@ Compile rules:
 - Save the user's money.
 - Do not run repeated checks, audits, subagents, or expensive calls if the
   change does not affect the result.
+- These efficiency rules never override required Local Memory MCP calls,
+  task-sync guard, proof, or explicit user-requested depth.
 - Repeat a check only when the change can affect behavior, a contract, data, or
   the final result.
 - Combine actions into one tool call when it is reasonable.
@@ -246,7 +253,7 @@ Compile rules:
   builds, logs, Docker, Kubernetes, and large status output.
 - Do not pretend a tool found something if it did not.
 
-## Session Memory
+## Temporary Handoff Files
 
 - If temporary untracked handoff files are created for the next agent, delete
   them at the end of the work.
@@ -258,13 +265,18 @@ Compile rules:
 ## Code Retrieval Tools
 
 Use this block only after the applicable memory and knowledge-base rules have
-run. If Local Memory MCP, repo Knowledge Base MCP, task-sync context, docs, or
-user-provided context already answer the question, do not search the repository.
+run. For simple questions, if Local Memory MCP, repo Knowledge Base MCP,
+task-sync context, docs, or user-provided context already answer the question,
+do not search the repository. For broad audits, removals, refactors, migrations,
+contract changes, agent-instruction changes, or high-stakes claims, still gather
+the repository/source evidence required by the memory-controlled completion
+protocol.
 
 These tools are for code discovery only. Use them when more repository evidence
 is needed after memory/KB/context grounding.
 
-Do not run startup health checks, version checks, or tool warmups by default.
+Do not run startup health checks, version checks, or tool warmups by default
+outside explicit install verification.
 
 For normal code work:
 
@@ -312,6 +324,8 @@ Verification:
 - If the target previously contained `LOCAL_MEMORY_MCP_AGENT_CONTRACT`, confirm
   it still contains exactly one such block and still says
   `Local Memory MCP is the agent core`.
+- If Codex config previously contained `mcp_servers.local-memory`, confirm it
+  was preserved and still has `required = true` when it had that flag before.
 - Confirm the target contains exactly one `ARQAWA_WORK_GLOBAL_RULES` block.
 - Confirm the target contains exactly one `GLOBAL_CODE_RETRIEVAL_POLICY` block.
 - Confirm no placeholder tokens remain in the installed target.
