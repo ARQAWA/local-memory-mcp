@@ -252,7 +252,8 @@ export function registerManageTools(server: McpServer, service: MemoryService) {
   server.registerTool(
     "consolidate",
     {
-      description: "Recalculate importance scores in repository memory after substantial memory changes or cleanup.",
+      description:
+        "Recalculate importance scores in repository memory after substantial memory changes, coverage-map closure, or cleanup.",
       inputSchema: { ...repositorySelector },
       annotations: { title: "Consolidate Memory", readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },

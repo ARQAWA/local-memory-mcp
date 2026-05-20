@@ -10,7 +10,7 @@ export function registerRememberTools(server: McpServer, service: MemoryService)
     "remember",
     {
       description:
-        "Record a durable memory in the current repository. Use for useful facts, decisions, procedures, episodes, references, conventions, and coverage maps discovered during work. Search memory first to avoid duplicates.",
+        "Record a durable memory in the current repository. Use for useful facts, decisions, procedures, episodes, references, conventions, requirements traceability matrices, and coverage maps discovered during work. Search memory first to avoid duplicates.",
       inputSchema: {
         content: z.string().min(1).describe("The knowledge to remember"),
         memory_type: z.enum(memoryTypes).describe("fact, decision, procedure, episode, reference, or convention"),
@@ -53,7 +53,7 @@ export function registerRememberTools(server: McpServer, service: MemoryService)
     "remember_fact",
     {
       description:
-        "Record an atomic durable fact in the current repository, including source-backed insights found during analysis.",
+        "Record an atomic durable fact in the current repository, including source-backed insights, negative findings, and closure evidence found during analysis.",
       inputSchema: {
         fact: z.string().min(1).describe("The atomic fact to remember"),
         tags: tagsArraySchema.describe("Classification tags"),

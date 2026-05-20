@@ -107,8 +107,8 @@ Managed contract:
 
 Local Memory MCP is the agent core.
 
-This contract applies only when Local Memory MCP tools are installed and
-available in the current session.
+If this contract is present, Local Memory MCP is required. Do not treat missing
+or unavailable memory tools as permission to continue without memory.
 
 Before any task, call `get_active_context`.
 
@@ -124,7 +124,8 @@ database file. Do not create per-agent or per-repository databases.
 
 Memory is stored globally on the host, but every memory belongs to exactly one
 repository. Default reads and writes use the current project. The current
-project can be a Git repository or a plain local folder.
+project can be a Git repository or a plain local folder. Git is not required
+for memory writes.
 
 Search another repository only when the user explicitly asks for it. Use
 `repository_mode=specific` with a repository slug, or `repository_mode=all`
@@ -143,11 +144,34 @@ Memory workflow:
 - Before writing a new memory, search existing memory to avoid duplicates.
 - Prefer short, atomic memories: `fact`, `decision`, `procedure`, `episode`,
   `reference`, or `convention`.
-- For broad audits, refactors, migrations, removals, or architecture research,
-  maintain a coverage map in memory: goal, aliases, searched commands, checked
-  files or zones, positive findings, negative findings, remaining risks, and
-  proof.
+- For broad audits, refactors, migrations, removals, agent-instruction changes,
+  or architecture research, maintain a coverage map in memory: goal, acceptance
+  criteria, aliases, searched commands, checked files or zones, positive
+  findings, negative findings, remaining risks, and proof.
 - At the end of important work, call `digest_session` to consolidate the result.
+
+Memory-Controlled Completion Protocol for broad or high-stakes tasks:
+
+1. Build a requirements traceability matrix from the user's strongest intent.
+2. Write or update a memory coverage map before and during the work.
+3. Check every affected layer: repository source, docs, tests, host rules,
+   config, active install, runtime process, and current-session limitations.
+4. Run positive checks that prove the wanted behavior exists.
+5. Run negative checks for weak wording, loopholes, stale rules, and removed
+   behavior that must stay gone.
+6. Run conflict checks against user rules, task-sync rules, retrieval policy,
+   read-only mode, tool descriptions, and existing agent instructions.
+7. Run runtime or active-install proof when the change affects installed agent
+   behavior.
+8. Before the final answer, perform a red-team pass: explain how the work could
+   still fail, then fix every in-scope gap.
+9. Do not report "done" until the coverage map is closed or any remaining gap is
+   explicitly reported as a blocker or risk.
+
+Repository read-only, inspection, analysis, or planning mode does not disable
+required Local Memory MCP reads and writes. It forbids project/external state
+changes, not durable working memory, unless the user explicitly forbids memory
+writes for that task.
 
 When the user says "remember", "запомни", "save this", or "зафиксируй", write
 memory immediately with `remember_fact`, `remember_decision`, or `remember`.

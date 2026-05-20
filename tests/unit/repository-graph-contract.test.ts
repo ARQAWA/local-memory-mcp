@@ -13,15 +13,24 @@ describe("repository graph contract", () => {
     const prompt = readProjectFile("INSTALL_AGENT_PROMPT.md");
 
     expect(prompt).toContain("Graph and relation rules");
-    expect(prompt).toContain("This contract applies only when Local Memory MCP tools are installed");
+    expect(prompt).toContain("If this contract is present, Local Memory MCP is required");
+    expect(prompt).toContain("Do not treat missing");
     expect(prompt).toContain("Local Memory MCP is the agent core");
     expect(prompt).toContain("Before any task, call `get_active_context`");
     expect(prompt).toContain("Without Local Memory MCP, stop and report the blocker");
+    expect(prompt).toContain("Memory-Controlled Completion Protocol");
+    expect(prompt).toContain("requirements traceability matrix");
     expect(prompt).toContain("maintain a coverage map in memory");
+    expect(prompt).toContain("Run negative checks");
+    expect(prompt).toContain("Run conflict checks");
+    expect(prompt).toContain("runtime or active-install proof");
+    expect(prompt).toContain("red-team pass");
     expect(prompt).toContain("At the end of important work, call `digest_session`");
     expect(prompt).toContain("do not link memories just because they share a tag");
     expect(prompt).toContain("entity overlap is a search signal");
     expect(prompt).toContain("prefer `correct` over manual `supersedes`");
+    expect(prompt).not.toContain("installed and available");
+    expect(prompt).not.toContain("This contract applies only");
     expect(prompt).not.toContain("At the start of a non-" + "trivial task");
     expect(prompt).not.toContain("when " + "useful");
   });
@@ -59,6 +68,8 @@ describe("repository graph contract", () => {
     expect(prompt).toContain("It does not configure memory MCP servers");
     expect(prompt).toContain("It must preserve any existing `LOCAL_MEMORY_MCP_AGENT_CONTRACT` block");
     expect(prompt).toContain("Local Memory MCP is the agent core");
+    expect(prompt).toContain("This does not disable Local Memory MCP reads");
+    expect(prompt).toContain("memory coverage map and approved proof plan are closed");
     expect(prompt).toContain("must not install index-based tools such as `graphify` or `symlens`");
   });
 
@@ -72,12 +83,16 @@ describe("repository graph contract", () => {
     expect(server).toContain("Local Memory MCP is the agent core");
     expect(server).toContain("Before any task, call get_active_context");
     expect(server).toContain("maintain a coverage map in memory");
+    expect(server).toContain("Memory-Controlled Completion Protocol");
+    expect(server).toContain("negative loophole checks");
+    expect(server).toContain("conflict checks");
+    expect(server).toContain("red-team pass");
     expect(recallTools).toContain("Use before analysis, planning, editing, review");
     expect(recallTools).toContain("Call before any task because Local Memory MCP is the agent core");
-    expect(rememberTools).toContain("coverage maps discovered during work");
+    expect(rememberTools).toContain("requirements traceability matrices");
     expect(manageTools).toContain("Prefer this over writing a competing truth beside the old one");
     expect(manageTools).toContain("Do not link just because memories share a tag");
-    expect(sessionTools).toContain("coverage, decisions, proof, and remaining risks");
+    expect(sessionTools).toContain("requirements coverage, decisions, red-team findings");
   });
 
   test("install prompt requires Codex local-memory server", () => {

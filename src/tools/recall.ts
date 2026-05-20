@@ -62,7 +62,7 @@ export function registerRecallTools(server: McpServer, service: MemoryService) {
     "recall",
     {
       description:
-        "Smart retrieval from repository memory. Use before analysis, planning, editing, review, or answering from repository knowledge. Defaults to the current repository; use repository_mode=specific/all only on explicit request.",
+        "Smart retrieval from repository memory. Use before analysis, planning, editing, review, closure checks, or answering from repository knowledge. Defaults to the current repository; use repository_mode=specific/all only on explicit request.",
       inputSchema: {
         query: z.string().min(1).describe("What are you looking for?"),
         context: z.string().optional().describe("What you're currently working on"),
@@ -145,7 +145,7 @@ export function registerRecallTools(server: McpServer, service: MemoryService) {
     "get_context_for",
     {
       description:
-        "Get repository memory relevant to a topic or file path. Use for focused retrieval before planning, edits, audits, reviews, or code explanation.",
+        "Get repository memory relevant to a topic or file path. Use for focused retrieval before planning, edits, audits, reviews, code explanation, or red-team closure checks.",
       inputSchema: {
         topic: z.string().min(1).describe("Topic or file path"),
         ...repositorySelector,

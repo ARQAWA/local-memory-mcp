@@ -9,7 +9,7 @@ export function registerSessionTools(server: McpServer, service: MemoryService) 
     "digest_session",
     {
       description:
-        "Capture and consolidate durable learnings, coverage, decisions, proof, and remaining risks from an important coding session in the current repository.",
+        "Capture and consolidate durable learnings, requirements coverage, decisions, red-team findings, proof, and remaining risks from an important coding session in the current repository.",
       inputSchema: { summary: z.string().min(1), tags: z.array(z.string()).default([]) },
       annotations: { title: "Digest Session", readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },

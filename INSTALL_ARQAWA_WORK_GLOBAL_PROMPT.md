@@ -111,7 +111,10 @@ Compile rules:
   do not ask for a second approval for commands like install, apply, fix, add,
   update, remove, or do the task.
 - If the user asks to inspect, analyze, plan, compare, or use read-only mode,
-  do not write or change state.
+  do not write or change project, product, external, or user-visible state.
+  This does not disable Local Memory MCP reads or required memory writes from
+  the `LOCAL_MEMORY_MCP_AGENT_CONTRACT`, unless the user explicitly forbids
+  memory writes for that task.
 - Ask before acting only when the request is ambiguous, destructive,
   irreversible, production/external-facing, financial, credential-related,
   security-sensitive, outside the clear request, or when explicit task-sync mode
@@ -288,7 +291,10 @@ Efficiency rules:
 - Keep result limits small.
 - Prefer file paths, symbols, and line refs before full code blocks.
 - Extract or read only the best candidate files.
-- Stop searching once there is enough evidence.
+- Stop searching once there is enough evidence. For broad audits, removals,
+  migrations, contract changes, or agent-instruction changes, "enough evidence"
+  means the memory coverage map and approved proof plan are closed; do not stop
+  at the first plausible match.
 - Avoid JSON output unless metadata is needed.
 - Do not search tests unless the task is about tests or behavior evidence needs
   tests.
