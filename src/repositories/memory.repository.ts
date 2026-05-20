@@ -92,7 +92,9 @@ export function parseJsonTags(tags: string | null | undefined): string[] {
   if (!tags) return [];
   try {
     const parsed = JSON.parse(tags) as unknown;
-    return Array.isArray(parsed) ? parsed.filter((tag): tag is string => typeof tag === "string" && tag.length > 0) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((tag): tag is string => typeof tag === "string" && tag.length > 0)
+      : [];
   } catch {
     return [];
   }
@@ -212,7 +214,9 @@ export class MemoryRepository {
       const slugTaken = db.get<{ id: string }>("SELECT id FROM repositories WHERE slug = ? LIMIT 1", [
         identity.repository_slug,
       ]);
-      const slug = slugTaken ? `${identity.repository_slug}-${identity.repository_root_hash.slice(0, 8)}` : identity.repository_slug;
+      const slug = slugTaken
+        ? `${identity.repository_slug}-${identity.repository_root_hash.slice(0, 8)}`
+        : identity.repository_slug;
       const id = randomUUID();
       db.run(
         `INSERT INTO repositories (id, slug, name, root_path, root_hash, remote_url_hash, metadata)
@@ -588,13 +592,17 @@ export class MemoryRepository {
     const staleRows = db.get<{ count: number }>(
       `SELECT COUNT(*) AS count FROM memories m
        WHERE ${activeClause("m")} AND m.last_accessed_at < ? ${repoFilter}`,
-      [nowIso(), new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(), ...(repositoryId ? [repositoryId] : [])],
+      [
+        nowIso(),
+        new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
+        ...(repositoryId ? [repositoryId] : []),
+      ],
     );
     const avgRows = db.get<{ avg: number }>(
       `SELECT COALESCE(AVG(m.importance), 0) AS avg FROM memories m WHERE ${activeClause("m")} ${repoFilter}`,
       repoParams,
     );
-    const mostAccessed = await this.list({ repository_id: repositoryId, limit: 10, offset: 0 });
+    const mostAccessed = this.listMostAccessed(repositoryId);
     const topTags = await this.getAllTags(repositoryId);
     return {
       repository: repository ? toRepository(repository) : null,
@@ -602,7 +610,7 @@ export class MemoryRepository {
       by_type: Object.fromEntries(typeRows.map((row) => [row.memory_type, row.count])),
       by_repository: Object.fromEntries(repositoryRows.map((row) => [row.slug, row.count])),
       top_tags: topTags.slice(0, 30),
-      most_accessed: mostAccessed.sort((a, b) => b.access_count - a.access_count).slice(0, 10),
+      most_accessed: mostAccessed,
       recent_count: recentRows?.count ?? 0,
       stale_count: staleRows?.count ?? 0,
       avg_importance: avgRows?.avg ?? 0,
@@ -618,6 +626,24 @@ export class MemoryRepository {
       params.push(repositoryId);
     }
     return this.getSql().all<MemoryRow>(sql, params).map(toMemory);
+  }
+
+  private listMostAccessed(repositoryId?: string): Memory[] {
+    const params: SqlParam[] = [nowIso()];
+    const conditions = [activeClause("m")];
+    if (repositoryId) {
+      conditions.push("m.repository_id = ?");
+      params.push(repositoryId);
+    }
+    return this.getSql()
+      .all<MemoryRow>(
+        `${memorySelect()}
+         WHERE ${conditions.join(" AND ")}
+         ORDER BY m.access_count DESC, m.last_accessed_at DESC, m.updated_at DESC
+         LIMIT 10`,
+        params,
+      )
+      .map(toMemory);
   }
 
   async listForReembedding(limit = 100, nullOnly = false, repositoryId?: string): Promise<Memory[]> {
@@ -665,7 +691,13 @@ export class MemoryRepository {
        DO UPDATE SET content = excluded.content, max_tokens = excluded.max_tokens, updated_at = ?`,
       [id, repositoryId, name, content, maxTokens, nowIso()],
     );
-    const row = this.getSql().get<{ name: string; content: string; max_tokens: number; repository_id: string; updated_at: string }>(
+    const row = this.getSql().get<{
+      name: string;
+      content: string;
+      max_tokens: number;
+      repository_id: string;
+      updated_at: string;
+    }>(
       `SELECT name, content, max_tokens, repository_id, updated_at
        FROM memory_blocks WHERE repository_id = ? AND name = ?`,
       [repositoryId, name],
@@ -685,8 +717,10 @@ export class MemoryRepository {
   }
 
   deleteBlock(repositoryId: string, name: string): boolean {
-    return this.getSql().run("DELETE FROM memory_blocks WHERE repository_id = ? AND name = ?", [repositoryId, name])
-      .changes > 0;
+    return (
+      this.getSql().run("DELETE FROM memory_blocks WHERE repository_id = ? AND name = ?", [repositoryId, name])
+        .changes > 0
+    );
   }
 
   adminAnalytics(days: number): {
@@ -703,7 +737,9 @@ export class MemoryRepository {
     const db = this.getSql();
     const sinceDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
     const staleDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-    const totalRow = db.get<{ count: number }>("SELECT COUNT(*) AS count FROM memories WHERE deleted_at IS NULL AND valid_until IS NULL");
+    const totalRow = db.get<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM memories WHERE deleted_at IS NULL AND valid_until IS NULL",
+    );
     const typeRows = db.all<{ memory_type: string; count: number }>(
       `SELECT memory_type, COUNT(*) AS count
        FROM memories
@@ -756,11 +792,14 @@ export class MemoryRepository {
     repository?: string;
   }): { total: number; memories: unknown[]; limit: number; offset: number } {
     const params: SqlParam[] = [];
+    const match = filters.search?.trim() ? ftsQuery(filters.search) : null;
+    if (filters.search?.trim() && !match) {
+      return { total: 0, memories: [], limit: filters.limit, offset: filters.offset };
+    }
     const conditions = ["m.deleted_at IS NULL", "m.valid_until IS NULL"];
-    if (filters.search) {
-      conditions.push("(m.content LIKE ? OR m.summary LIKE ?)");
-      params.push(`%${filters.search.replaceAll("%", " ").replaceAll("_", " ")}%`);
-      params.push(`%${filters.search.replaceAll("%", " ").replaceAll("_", " ")}%`);
+    if (match) {
+      conditions.push("memories_fts MATCH ?");
+      params.push(match);
     }
     if (filters.memoryType) {
       conditions.push("m.memory_type = ?");
@@ -771,10 +810,16 @@ export class MemoryRepository {
       params.push(filters.repository);
     }
     const where = `WHERE ${conditions.join(" AND ")}`;
+    const from = match
+      ? `FROM memories_fts
+         JOIN memories m ON m.pk = memories_fts.rowid
+         JOIN repositories r ON r.id = m.repository_id`
+      : `FROM memories m
+         JOIN repositories r ON r.id = m.repository_id`;
+    const orderBy = match ? "ORDER BY bm25(memories_fts), m.updated_at DESC" : "ORDER BY m.updated_at DESC";
     const countRow = this.getSql().get<{ count: number }>(
       `SELECT COUNT(*) AS count
-       FROM memories m
-       JOIN repositories r ON r.id = m.repository_id
+       ${from}
        ${where}`,
       params,
     );
@@ -782,10 +827,9 @@ export class MemoryRepository {
       `SELECT m.id, m.summary, m.memory_type, r.slug AS repository,
               m.user_id, m.created_by, m.importance, m.access_count,
               m.created_at, m.updated_at
-       FROM memories m
-       JOIN repositories r ON r.id = m.repository_id
+       ${from}
        ${where}
-       ORDER BY m.updated_at DESC
+       ${orderBy}
        LIMIT ? OFFSET ?`,
       [...params, filters.limit, filters.offset],
     );

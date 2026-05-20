@@ -186,6 +186,22 @@ describe("repository graph contract", () => {
     expect(repo).toContain("JOIN ranked ON ranked.memory_pk = m.pk");
   });
 
+  test("stats and admin search keep indexed performance paths", () => {
+    const repo = readProjectFile("src/repositories/memory.repository.ts");
+    const schema = readProjectFile("src/db/migrations/001_schema.sql");
+    const migration = readProjectFile("src/db/migrations/002_access_count_indexes.sql");
+
+    expect(repo).toContain("private listMostAccessed");
+    expect(repo).toContain("ORDER BY m.access_count DESC, m.last_accessed_at DESC, m.updated_at DESC");
+    expect(repo).toContain("FROM memories_fts");
+    expect(repo).toContain("memories_fts MATCH ?");
+    expect(repo).not.toContain("m.content LIKE ? OR m.summary LIKE ?");
+    expect(schema).toContain("idx_memories_access_count_active");
+    expect(schema).toContain("idx_memories_repository_access_count_active");
+    expect(migration).toContain("idx_memories_access_count_active");
+    expect(migration).toContain("idx_memories_repository_access_count_active");
+  });
+
   test("entity search uses SQLite trigram FTS and matched counts", () => {
     const repo = readProjectFile("src/repositories/entity.repository.ts");
     const schema = readProjectFile("src/db/migrations/001_schema.sql");
