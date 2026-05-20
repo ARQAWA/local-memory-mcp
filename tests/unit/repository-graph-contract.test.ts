@@ -19,6 +19,13 @@ describe("repository graph contract", () => {
     expect(prompt).toContain("Before any task, call `get_active_context`");
     expect(prompt).toContain("Without Local Memory MCP, stop and report the blocker");
     expect(prompt).toContain("Memory-Controlled Completion Protocol");
+    expect(prompt).toContain("Task Working Memory Protocol");
+    expect(prompt).toContain("open_task_memory");
+    expect(prompt).toContain("update_task_memory");
+    expect(prompt).toContain("get_task_memory");
+    expect(prompt).toContain("close_task_memory");
+    expect(prompt).toContain("routes/endpoints, services, repositories, clients, permissions/auth");
+    expect(prompt).toContain("Use `set_session_context` only as lightweight current-work context");
     expect(prompt).toContain("requirements traceability matrix");
     expect(prompt).toContain("maintain a coverage map in memory");
     expect(prompt).toContain("Run negative checks");
@@ -42,6 +49,11 @@ describe("repository graph contract", () => {
     expect(readme).toContain("Agent behavior is defined by");
     expect(readme).toContain("INSTALL_AGENT_PROMPT.md");
     expect(readme).toContain("Do not copy this README as an agent contract");
+    expect(readme).toContain("Task Working Memory for multi-step tasks");
+    expect(readme).toContain("open_task_memory");
+    expect(readme).toContain("update_task_memory");
+    expect(readme).toContain("get_task_memory");
+    expect(readme).toContain("close_task_memory");
     expect(readme).not.toContain("Use memory when " + "it helps the task");
     expect(readme).not.toContain("At the start of non-" + "trivial work");
   });
@@ -79,9 +91,14 @@ describe("repository graph contract", () => {
     const rememberTools = readProjectFile("src/tools/remember.ts");
     const manageTools = readProjectFile("src/tools/manage.ts");
     const sessionTools = readProjectFile("src/tools/session.ts");
+    const taskMemoryTools = readProjectFile("src/tools/task-memory.ts");
+    const toolsIndex = readProjectFile("src/tools/index.ts");
 
     expect(server).toContain("Local Memory MCP is the agent core");
     expect(server).toContain("Before any task, call get_active_context");
+    expect(server).toContain("Task Working Memory workbench");
+    expect(server).toContain("open_task_memory");
+    expect(server).toContain("routes/endpoints, services, repositories, clients, permissions/auth");
     expect(server).toContain("maintain a coverage map in memory");
     expect(server).toContain("Memory-Controlled Completion Protocol");
     expect(server).toContain("negative loophole checks");
@@ -93,6 +110,14 @@ describe("repository graph contract", () => {
     expect(manageTools).toContain("Prefer this over writing a competing truth beside the old one");
     expect(manageTools).toContain("Do not link just because memories share a tag");
     expect(sessionTools).toContain("requirements coverage, decisions, red-team findings");
+    expect(sessionTools).toContain("open_task_memory/update_task_memory/close_task_memory");
+    expect(taskMemoryTools).toContain("registerTaskMemoryTools");
+    expect(taskMemoryTools).toContain("Task Working Memory");
+    expect(taskMemoryTools).toContain("discovery_map");
+    expect(taskMemoryTools).toContain("layer_implementation_plan");
+    expect(taskMemoryTools).toContain("durable_extract");
+    expect(taskMemoryTools).toContain("service.digestSession");
+    expect(toolsIndex).toContain("registerTaskMemoryTools");
   });
 
   test("install prompt requires Codex local-memory server", () => {

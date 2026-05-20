@@ -25,7 +25,7 @@ export function registerSessionTools(server: McpServer, service: MemoryService) 
     "set_session_context",
     {
       description:
-        "Record short-lived current work context in the current repository so later memory reads understand the active task.",
+        "Record lightweight short-lived current work context in the current repository. For multi-step discovery, planning, editing, testing, or review, open and maintain a Task Working Memory workbench with open_task_memory/update_task_memory/close_task_memory.",
       inputSchema: {
         goal: z.string().min(1),
         files: z.array(z.string()).optional(),

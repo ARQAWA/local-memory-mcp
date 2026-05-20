@@ -10,6 +10,7 @@ import { registerConventionTools } from "./conventions.js";
 import { registerDebuggingTools } from "./debugging.js";
 import { registerEnterpriseTools } from "./enterprise.js";
 import { registerBlockTools } from "./blocks.js";
+import { registerTaskMemoryTools } from "./task-memory.js";
 
 export function registerAllTools(server: McpServer, service: MemoryService) {
   registerRecallTools(server, service);
@@ -18,6 +19,7 @@ export function registerAllTools(server: McpServer, service: MemoryService) {
   registerImportExportTools(server, service);
   registerCodingTools(server, service);
   registerSessionTools(server, service);
+  registerTaskMemoryTools(server, service);
   registerConventionTools(server, service);
   registerDebuggingTools(server, service);
   registerEnterpriseTools(server, service);

@@ -69,6 +69,7 @@ Core read tools:
 - `get_active_context`
 - `recall`
 - `get_context_for`
+- `get_task_memory`
 - `get_memory`
 - `list_memories`
 - `search_memories`
@@ -85,6 +86,9 @@ Core write tools:
 - `forget`
 - `batch_forget`
 - `set_session_context`
+- `open_task_memory`
+- `update_task_memory`
+- `close_task_memory`
 - `digest_session`
 
 Maintenance and repair:
@@ -113,8 +117,9 @@ The source of truth for agent behavior is `INSTALL_AGENT_PROMPT.md`.
 The installer writes the managed `LOCAL_MEMORY_MCP_AGENT_CONTRACT` into the
 host global rules. That contract treats Local Memory MCP as the agent core:
 agents read memory before work, update durable findings during work, maintain
-coverage maps for broad audits, correct stale memories, forget noise, and
-consolidate important sessions.
+Task Working Memory for multi-step tasks, maintain coverage maps for broad
+audits, correct stale memories, forget noise, and consolidate important
+sessions.
 
 Do not copy this README as an agent contract.
 

@@ -93,6 +93,9 @@ Install checks:
   repository chart, pagination, and memory detail modal.
 - Active UI and `dist` must expose repository identity only.
 - MCP schemas must expose only repository-first selector fields.
+- MCP schemas must expose Task Working Memory tools:
+  `open_task_memory`, `update_task_memory`, `get_task_memory`,
+  `close_task_memory`.
 - The host global rules must contain exactly one
   `LOCAL_MEMORY_MCP_AGENT_CONTRACT` block.
 - If ARQAWA blocks exist, they must remain separate and must not weaken,
@@ -150,6 +153,33 @@ Memory workflow:
   findings, negative findings, remaining risks, and proof.
 - At the end of important work, call `digest_session` to consolidate the result.
 
+Task Working Memory Protocol:
+
+For any task that needs discovery, planning, edits, tests, review, or more than
+one meaningful step, the agent must keep a short-lived task workbench.
+
+1. Start with `get_active_context`.
+2. Call `recall` or `get_context_for` for the task topic.
+3. Open the workbench with `open_task_memory`.
+4. During discovery, update `discovery_map` by layers:
+   routes/endpoints, services, repositories, clients, permissions/auth,
+   configs, tests, data contracts, docs, active install, and runtime when
+   relevant.
+5. During analysis, update `analysis` with findings, unknowns, constraints, and
+   affected layers.
+6. During design, update `design_plan` and `rejected_options` with KISS, YAGNI,
+   and SOLID reasoning.
+7. During implementation, update `layer_implementation_plan` and `progress` as
+   each layer is changed.
+8. During proof, update `test_matrix` with requirements, checks, and results.
+9. During self-review, update `review_checklist` and `risks`.
+10. Before reporting done, call `close_task_memory` with outcome and durable
+    summary. It must digest durable learnings and remove or explicitly retain
+    short-lived scratch.
+
+Use `set_session_context` only as lightweight current-work context. It does not
+replace Task Working Memory for multi-step work.
+
 Memory-Controlled Completion Protocol for broad or high-stakes tasks:
 
 1. Build a requirements traceability matrix from the user's strongest intent.
@@ -205,11 +235,13 @@ Use `list_repositories` only when cross-repository discovery is needed.
 Useful read tools: `get_active_context`, `recall`, `get_context_for`,
 `get_memory`, `get_related`, `get_group`, `list_memories`,
 `search_memories`, `query_entities`, `detect_conflicts`,
-`get_memory_stats`, `get_repository_overview`, and `list_repositories`.
+`get_memory_stats`, `get_repository_overview`, `list_repositories`, and
+`get_task_memory`.
 
 Useful write tools: `remember`, `remember_fact`, `remember_decision`,
 `correct`, `forget`, `batch_forget`, `link_memories`,
-`set_session_context`, and `digest_session`.
+`set_session_context`, `open_task_memory`, `update_task_memory`,
+`close_task_memory`, and `digest_session`.
 
 Never store secrets, tokens, passwords, private keys, credentials, or private
 auth material.
