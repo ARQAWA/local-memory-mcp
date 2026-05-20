@@ -97,9 +97,10 @@ describe("repository graph contract", () => {
     expect(prompt).toContain("For simple questions");
     expect(prompt).toContain("high-stakes claims");
     expect(prompt).toContain("outside explicit install verification");
-    expect(prompt).toContain("$HOME/.local/share/arqawa-work/ARQAWA_WORK_GLOBAL_RULES.md");
+    expect(prompt).toContain("Do not write fallback rule files");
     expect(prompt).toContain("memory coverage map and approved proof plan are closed");
     expect(prompt).toContain("must not install index-based tools such as `graphify` or `symlens`");
+    expect(prompt).not.toContain("$HOME/.local/share/arqawa-work/ARQAWA_WORK_GLOBAL_RULES.md");
     expect(prompt).not.toContain("$HOME/.local/share/local-memory-mcp/ARQAWA_WORK_GLOBAL_RULES.md");
   });
 

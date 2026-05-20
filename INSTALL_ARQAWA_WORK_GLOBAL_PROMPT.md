@@ -37,10 +37,9 @@ Host target:
 - Claude Code: use the host global/user instruction target.
 - Cursor: use Cursor User Rules or the documented user/global rules target.
 - VS Code/GitHub Copilot: use user/custom instructions if available.
-- Unknown host: inspect documented user/global rules. If unsafe, write the
-  compiled blocks to:
-  `$HOME/.local/share/arqawa-work/ARQAWA_WORK_GLOBAL_RULES.md`
-  and report that manual paste is required.
+- Unknown host: inspect documented user/global rules. If a safe global/user
+  rules target cannot be found, stop and report that manual install is required.
+  Do not write fallback rule files.
 
 Install host tools when supported:
 - Prefer idempotent installs. If a tool already works, do not reinstall it.
