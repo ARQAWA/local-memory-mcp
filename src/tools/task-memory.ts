@@ -5,6 +5,8 @@ import { ValidationError } from "../errors.js";
 import { MemoryService } from "../services/memory.service.js";
 import { requireWritePermission, withErrorHandling } from "./util.js";
 
+const durableMemoryTypes = ["fact", "decision", "procedure", "episode", "reference", "convention"] as const;
+
 const sectionTitles = {
   acceptance_criteria: "Acceptance Criteria",
   discovery_map: "Discovery Map",
@@ -46,6 +48,12 @@ function listOrPending(items?: string[]): string {
 function textOrPending(value?: string): string {
   const trimmed = value?.trim();
   if (trimmed === undefined || trimmed.length === 0) return "- pending";
+  return trimmed;
+}
+
+function trimOrFallback(value: string | undefined, fallback: string): string {
+  const trimmed = value?.trim();
+  if (trimmed === undefined || trimmed.length === 0) return fallback;
   return trimmed;
 }
 
@@ -115,6 +123,29 @@ function buildTaskContent(params: {
   ].join("\n");
 }
 
+function buildArtifactContent(params: {
+  slug: string;
+  outcome: string;
+  artifactSummary: string;
+  taskKind: "normal" | "microtask";
+  artifactTtlDays: number;
+  closedAt: string;
+}): string {
+  return [
+    `# Task Artifact: ${params.slug}`,
+    "",
+    `Task Kind: ${params.taskKind}`,
+    `Closed At: ${params.closedAt}`,
+    `Artifact TTL Days: ${params.artifactTtlDays}`,
+    "",
+    "## Outcome",
+    params.outcome.trim(),
+    "",
+    "## Summary",
+    params.artifactSummary.trim(),
+  ].join("\n");
+}
+
 function updateSection(content: string, sectionTitle: string, update: string, operation: "append" | "replace"): string {
   const lines = content.split("\n");
   const heading = `## ${sectionTitle}`;
@@ -160,7 +191,7 @@ export function registerTaskMemoryTools(server: McpServer, service: MemoryServic
     "open_task_memory",
     {
       description:
-        "Open a short-lived Task Working Memory workbench in the current repository before multi-step discovery, planning, editing, testing, or review. Use this after initial memory grounding and keep it updated until close_task_memory.",
+        "Open a short-lived Task Working Memory scratch block in the current repository before multi-step discovery, planning, editing, testing, or review. Duplicate slugs return the existing scratch instead of overwriting it.",
       inputSchema: {
         slug: z.string().min(1).max(120).describe("Stable task slug, for example add-auth-rate-limit"),
         goal: z.string().min(1).describe("Task goal"),
@@ -175,29 +206,25 @@ export function registerTaskMemoryTools(server: McpServer, service: MemoryServic
     },
     withErrorHandling(async (params) => {
       requireWritePermission();
-      const ctx = getRequestContextOrDefault();
       const task = taskBlockName(params.slug);
+      const existing = (await service.listMemoryBlocks()).find((candidate) => candidate.name === task.name);
+      if (existing) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                slug: task.slug,
+                name: task.name,
+                block: existing,
+                already_open: true,
+              }),
+            },
+          ],
+        };
+      }
       const content = buildTaskContent({ ...params, slug: task.slug });
       const block = await service.updateMemoryBlock(task.name, content, params.max_tokens, "replace");
-      const sessionMemory = await service.remember({
-        content: [
-          `Current task working memory: ${params.goal}`,
-          `Task: ${task.name}`,
-          params.files?.length ? `Files: ${params.files.join(", ")}` : "",
-          params.notes ? `Notes: ${params.notes}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-        memory_type: "episode",
-        tags: [
-          "task-working-memory",
-          "session-context",
-          `task:${task.slug}`,
-          ...(params.files ?? []).map((file) => `file:${file}`),
-        ],
-        ttl_days: 30,
-        created_by: ctx.user_id,
-      });
       return {
         content: [
           {
@@ -206,8 +233,7 @@ export function registerTaskMemoryTools(server: McpServer, service: MemoryServic
               slug: task.slug,
               name: task.name,
               block,
-              session_memory_id: sessionMemory.id,
-              repository: sessionMemory.repository_slug,
+              already_open: false,
             }),
           },
         ],
@@ -258,11 +284,15 @@ export function registerTaskMemoryTools(server: McpServer, service: MemoryServic
     "close_task_memory",
     {
       description:
-        "Close a Task Working Memory workbench: record outcome, digest durable learnings, and delete the short-lived scratch block by default.",
+        "Close a Task Working Memory workbench: delete the short-lived scratch block by default, create one TTL task artifact (30 days by default, 5 days for task_kind=microtask), and promote durable knowledge only when durable_summary is provided.",
       inputSchema: {
         slug: z.string().min(1).max(120),
         outcome: z.string().min(1),
+        task_kind: z.enum(["normal", "microtask"]).default("normal"),
+        artifact_summary: z.string().optional(),
+        artifact_ttl_days: z.number().int().min(1).max(3650).optional(),
         durable_summary: z.string().optional(),
+        durable_memory_type: z.enum(durableMemoryTypes).default("reference"),
         delete_scratch: z.boolean().default(true),
       },
       annotations: { title: "Close Task Memory", readOnlyHint: false, destructiveHint: false, idempotentHint: false },
@@ -272,6 +302,8 @@ export function registerTaskMemoryTools(server: McpServer, service: MemoryServic
       const ctx = getRequestContextOrDefault();
       const { slug, name, block } = await getTaskBlock(service, params.slug);
       const closedAt = new Date().toISOString();
+      const artifactTtlDays = params.artifact_ttl_days ?? (params.task_kind === "microtask" ? 5 : 30);
+      const artifactSummary = trimOrFallback(params.artifact_summary, params.outcome.trim());
       const closedContent = updateSection(
         updateSection(block.content, "Durable Extract", params.durable_summary ?? params.outcome, "append"),
         "Progress",
@@ -279,17 +311,32 @@ export function registerTaskMemoryTools(server: McpServer, service: MemoryServic
         "append",
       ).replace("Status: open", "Status: closed");
       const closedBlock = await service.updateMemoryBlock(name, closedContent, block.max_tokens, "replace");
-      const digest = await service.digestSession({
-        summary: [
-          `Task Working Memory closed: ${params.outcome}`,
-          params.durable_summary ? `Durable summary: ${params.durable_summary}` : "",
-          `Task slug: ${slug}`,
-        ]
-          .filter(Boolean)
-          .join("\n"),
-        tags: ["task-working-memory", `task:${slug}`],
+      const artifact = await service.remember({
+        content: buildArtifactContent({
+          slug,
+          outcome: params.outcome,
+          artifactSummary,
+          taskKind: params.task_kind,
+          artifactTtlDays,
+          closedAt,
+        }),
+        memory_type: "episode",
+        tags: ["task-working-memory", "task-artifact", `task:${slug}`, `task-kind:${params.task_kind}`],
+        ttl_days: artifactTtlDays,
+        importance: params.task_kind === "microtask" ? 0.25 : 0.35,
         created_by: ctx.user_id,
+        source: `task:${slug}`,
       });
+      const durableSummary = params.durable_summary?.trim();
+      const durable = durableSummary
+        ? await service.remember({
+            content: durableSummary,
+            memory_type: params.durable_memory_type,
+            tags: ["task-working-memory", "durable-promotion", `task:${slug}`],
+            created_by: ctx.user_id,
+            source: `task:${slug}`,
+          })
+        : null;
       const deleted = params.delete_scratch ? await service.deleteMemoryBlock(name) : false;
       return {
         content: [
@@ -299,7 +346,11 @@ export function registerTaskMemoryTools(server: McpServer, service: MemoryServic
               slug,
               name,
               closed: true,
-              durable_memories_created: digest.created,
+              artifact_memory_id: artifact.id,
+              artifact_ttl_days: artifactTtlDays,
+              durable_memory_id: durable?.id,
+              durable_memory_type: durable?.memory_type,
+              durable_memories_created: durable ? 1 : 0,
               scratch_deleted: deleted,
               block: params.delete_scratch ? undefined : closedBlock,
             }),

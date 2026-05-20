@@ -32,7 +32,12 @@ describe("repository graph contract", () => {
     expect(prompt).toContain("Run conflict checks");
     expect(prompt).toContain("runtime or active-install proof");
     expect(prompt).toContain("red-team pass");
-    expect(prompt).toContain("At the end of important work, call `digest_session`");
+    expect(prompt).toContain("close Task Working Memory with");
+    expect(prompt).toContain("Task memory has three layers");
+    expect(prompt).toContain("TTL 30 days by default");
+    expect(prompt).toContain("5 days when `task_kind=microtask`");
+    expect(prompt).toContain("durable_summary");
+    expect(prompt).toContain("Do not promote administrative task text");
     expect(prompt).toContain("do not link memories just because they share a tag");
     expect(prompt).toContain("entity overlap is a search signal");
     expect(prompt).toContain("prefer `correct` over manual `supersedes`");
@@ -54,6 +59,10 @@ describe("repository graph contract", () => {
     expect(readme).toContain("update_task_memory");
     expect(readme).toContain("get_task_memory");
     expect(readme).toContain("close_task_memory");
+    expect(readme).toContain("Task Working Memory has three layers");
+    expect(readme).toContain("TTL 30 days by default");
+    expect(readme).toContain("5 days");
+    expect(readme).toContain("durable memory only for reusable");
     expect(readme).not.toContain("Use memory when " + "it helps the task");
     expect(readme).not.toContain("At the start of non-" + "trivial work");
   });
@@ -98,6 +107,8 @@ describe("repository graph contract", () => {
     expect(server).toContain("Before any task, call get_active_context");
     expect(server).toContain("Task Working Memory workbench");
     expect(server).toContain("open_task_memory");
+    expect(server).toContain("one TTL task artifact");
+    expect(server).toContain("use digest_session only for separate session-level consolidation");
     expect(server).toContain("routes/endpoints, services, repositories, clients, permissions/auth");
     expect(server).toContain("maintain a coverage map in memory");
     expect(server).toContain("Memory-Controlled Completion Protocol");
@@ -116,7 +127,14 @@ describe("repository graph contract", () => {
     expect(taskMemoryTools).toContain("discovery_map");
     expect(taskMemoryTools).toContain("layer_implementation_plan");
     expect(taskMemoryTools).toContain("durable_extract");
-    expect(taskMemoryTools).toContain("service.digestSession");
+    expect(taskMemoryTools).toContain("artifact_ttl_days");
+    expect(taskMemoryTools).toContain("task_kind");
+    expect(taskMemoryTools).toContain("microtask");
+    expect(taskMemoryTools).toContain("durable_memory_type");
+    expect(taskMemoryTools).toContain("task-artifact");
+    expect(taskMemoryTools).toContain("durable-promotion");
+    expect(taskMemoryTools).not.toContain("service.digestSession");
+    expect(taskMemoryTools).not.toContain("Task slug:");
     expect(toolsIndex).toContain("registerTaskMemoryTools");
   });
 

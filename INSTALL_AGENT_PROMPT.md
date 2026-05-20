@@ -151,7 +151,9 @@ Memory workflow:
   or architecture research, maintain a coverage map in memory: goal, acceptance
   criteria, aliases, searched commands, checked files or zones, positive
   findings, negative findings, remaining risks, and proof.
-- At the end of important work, call `digest_session` to consolidate the result.
+- At the end of important work, close Task Working Memory with
+  `close_task_memory`. Use `digest_session` only when no task workbench is open
+  and a separate session-level digest is needed.
 
 Task Working Memory Protocol:
 
@@ -161,6 +163,8 @@ one meaningful step, the agent must keep a short-lived task workbench.
 1. Start with `get_active_context`.
 2. Call `recall` or `get_context_for` for the task topic.
 3. Open the workbench with `open_task_memory`.
+   This creates only short-lived scratch. If the same slug is already open, it
+   returns the existing scratch instead of overwriting it.
 4. During discovery, update `discovery_map` by layers:
    routes/endpoints, services, repositories, clients, permissions/auth,
    configs, tests, data contracts, docs, active install, and runtime when
@@ -173,9 +177,22 @@ one meaningful step, the agent must keep a short-lived task workbench.
    each layer is changed.
 8. During proof, update `test_matrix` with requirements, checks, and results.
 9. During self-review, update `review_checklist` and `risks`.
-10. Before reporting done, call `close_task_memory` with outcome and durable
-    summary. It must digest durable learnings and remove or explicitly retain
-    short-lived scratch.
+10. Before reporting done, call `close_task_memory`. It must delete or
+    explicitly retain scratch, create one small task artifact with TTL, and
+    promote durable knowledge only when `durable_summary` contains reusable
+    knowledge.
+
+Task memory has three layers:
+
+- scratch: temporary planning, analysis, progress, proof, and review state;
+- task artifact: one short-lived receipt after close, TTL 30 days by default or
+  5 days when `task_kind=microtask`;
+- durable knowledge: permanent memory only for reusable facts, decisions,
+  procedures, conventions, architecture changes, API/contract changes, bug root
+  causes, migrations, non-obvious repo patterns, or important negative findings.
+
+Do not promote administrative task text, task slugs, routine progress, or
+low-value microtask details into durable memory.
 
 Use `set_session_context` only as lightweight current-work context. It does not
 replace Task Working Memory for multi-step work.

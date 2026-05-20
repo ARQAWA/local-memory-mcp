@@ -118,8 +118,16 @@ The installer writes the managed `LOCAL_MEMORY_MCP_AGENT_CONTRACT` into the
 host global rules. That contract treats Local Memory MCP as the agent core:
 agents read memory before work, update durable findings during work, maintain
 Task Working Memory for multi-step tasks, maintain coverage maps for broad
-audits, correct stale memories, forget noise, and consolidate important
-sessions.
+audits, correct stale memories, forget noise, and close task work safely.
+
+Task Working Memory has three layers:
+
+- scratch while the task is running;
+- one small task artifact after close, with TTL 30 days by default or 5 days
+  for `task_kind=microtask`;
+- durable memory only for reusable facts, decisions, procedures, conventions,
+  architecture changes, API/contract changes, bug roots, migrations, non-obvious
+  repo patterns, or important negative findings.
 
 Do not copy this README as an agent contract.
 
