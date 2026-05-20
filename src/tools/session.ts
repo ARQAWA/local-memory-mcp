@@ -8,7 +8,8 @@ export function registerSessionTools(server: McpServer, service: MemoryService) 
   server.registerTool(
     "digest_session",
     {
-      description: "Capture durable learnings from this coding session in the current repository.",
+      description:
+        "Capture and consolidate durable learnings, coverage, decisions, proof, and remaining risks from an important coding session in the current repository.",
       inputSchema: { summary: z.string().min(1), tags: z.array(z.string()).default([]) },
       annotations: { title: "Digest Session", readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
@@ -23,7 +24,8 @@ export function registerSessionTools(server: McpServer, service: MemoryService) 
   server.registerTool(
     "set_session_context",
     {
-      description: "Record short-lived context about current work in the current repository.",
+      description:
+        "Record short-lived current work context in the current repository so later memory reads understand the active task.",
       inputSchema: {
         goal: z.string().min(1),
         files: z.array(z.string()).optional(),

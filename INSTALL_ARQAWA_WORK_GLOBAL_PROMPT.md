@@ -22,6 +22,9 @@ Important:
 - This prompt configures host work tooling.
 - It does not install Local Memory MCP.
 - It does not configure memory MCP servers.
+- It must preserve any existing `LOCAL_MEMORY_MCP_AGENT_CONTRACT` block.
+- It must not weaken, duplicate, replace, or remove the Local Memory MCP
+  contract. That contract is installed only by `INSTALL_AGENT_PROMPT.md`.
 - It must not install index-based tools such as `graphify` or `symlens`.
 - It must not create repository indexes or project config files.
 - It must not run startup health checks by default.
@@ -300,6 +303,9 @@ search command.
 Verification:
 - Confirm the selected rules target exists or report the manual target.
 - Confirm unrelated rules outside managed blocks were preserved.
+- If the target previously contained `LOCAL_MEMORY_MCP_AGENT_CONTRACT`, confirm
+  it still contains exactly one such block and still says
+  `Local Memory MCP is the agent core`.
 - Confirm the target contains exactly one `ARQAWA_WORK_GLOBAL_RULES` block.
 - Confirm the target contains exactly one `GLOBAL_CODE_RETRIEVAL_POLICY` block.
 - Confirm no placeholder tokens remain in the installed target.

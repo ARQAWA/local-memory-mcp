@@ -62,7 +62,7 @@ export function registerRecallTools(server: McpServer, service: MemoryService) {
     "recall",
     {
       description:
-        "Smart retrieval from repository memory. Defaults to the current repository; use repository_mode=specific/all only on explicit request.",
+        "Smart retrieval from repository memory. Use before analysis, planning, editing, review, or answering from repository knowledge. Defaults to the current repository; use repository_mode=specific/all only on explicit request.",
       inputSchema: {
         query: z.string().min(1).describe("What are you looking for?"),
         context: z.string().optional().describe("What you're currently working on"),
@@ -100,7 +100,7 @@ export function registerRecallTools(server: McpServer, service: MemoryService) {
     "get_active_context",
     {
       description:
-        "Get active knowledge for the current repository. Can search another repository only when repository_mode is explicit.",
+        "Get active knowledge for the current repository. Call before any task because Local Memory MCP is the agent core. Can search another repository only when repository_mode is explicit.",
       inputSchema: {
         ...repositorySelector,
         working_on: z.string().optional().describe("Current file, feature, or topic"),
@@ -144,7 +144,8 @@ export function registerRecallTools(server: McpServer, service: MemoryService) {
   server.registerTool(
     "get_context_for",
     {
-      description: "Get repository memory relevant to a topic or file path.",
+      description:
+        "Get repository memory relevant to a topic or file path. Use for focused retrieval before planning, edits, audits, reviews, or code explanation.",
       inputSchema: {
         topic: z.string().min(1).describe("Topic or file path"),
         ...repositorySelector,

@@ -14,7 +14,8 @@ export function registerManageTools(server: McpServer, service: MemoryService) {
   server.registerTool(
     "forget",
     {
-      description: "Soft-invalidate a memory in its repository.",
+      description:
+        "Soft-invalidate a stale, wrong, noisy, or irrelevant memory in its repository as part of memory hygiene.",
       inputSchema: { id: z.uuid(), reason: z.string().optional() },
       annotations: { title: "Forget Memory", readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     },
@@ -33,7 +34,7 @@ export function registerManageTools(server: McpServer, service: MemoryService) {
   server.registerTool(
     "batch_forget",
     {
-      description: "Soft-invalidate multiple memories.",
+      description: "Soft-invalidate multiple stale, wrong, noisy, or irrelevant memories as part of memory hygiene.",
       inputSchema: { ids: z.array(z.uuid()).min(1).max(100), reason: z.string().max(5000).optional() },
       annotations: { title: "Batch Forget Memories", readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     },
@@ -64,7 +65,8 @@ export function registerManageTools(server: McpServer, service: MemoryService) {
   server.registerTool(
     "correct",
     {
-      description: "Supersede a memory with corrected information in the same repository.",
+      description:
+        "Supersede a stale or wrong memory with corrected information in the same repository. Prefer this over writing a competing truth beside the old one.",
       inputSchema: { id: z.uuid(), new_content: z.string().min(1), reason: z.string().optional() },
       annotations: { title: "Correct Memory", readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
@@ -178,7 +180,8 @@ export function registerManageTools(server: McpServer, service: MemoryService) {
   server.registerTool(
     "link_memories",
     {
-      description: "Create a relation between two memories in the same repository.",
+      description:
+        "Create a strong explicit relation between two memories in the same repository. Do not link just because memories share a tag, file, entity, topic, or search result.",
       inputSchema: {
         source_id: z.uuid(),
         target_id: z.uuid(),
@@ -249,7 +252,7 @@ export function registerManageTools(server: McpServer, service: MemoryService) {
   server.registerTool(
     "consolidate",
     {
-      description: "Recalculate importance scores in repository memory.",
+      description: "Recalculate importance scores in repository memory after substantial memory changes or cleanup.",
       inputSchema: { ...repositorySelector },
       annotations: { title: "Consolidate Memory", readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },

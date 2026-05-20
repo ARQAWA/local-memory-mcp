@@ -11,6 +11,8 @@ Goal:
 - Configure the current agent host to use this MCP globally.
 - Install the Local Memory Agent Contract in the current host's global
   rules/instructions store.
+- Make the Local Memory MCP server required when the host supports required
+  MCP servers.
 - Verify SQLite, MCP tools, Web UI, Admin UI, and installed rules.
 
 Repository:
@@ -66,7 +68,11 @@ Steps:
 9. Run migrations with `pnpm run migrate`.
 10. Link command wrappers into `$HOME/.local/bin`.
 11. Configure a global MCP server named `local-memory`.
+    - For Codex, set `required = true` for `mcp_servers.local-memory`.
 12. Install the managed contract below into the host global rules.
+    - Replace only the managed `LOCAL_MEMORY_MCP_AGENT_CONTRACT` block.
+    - Preserve unrelated rules and other managed blocks, including ARQAWA
+      blocks.
 13. Start/restart `local-memory-web`.
 14. Verify Web UI and Admin UI.
 15. Start a fresh agent/MCP session and verify tool schemas.
@@ -87,17 +93,31 @@ Install checks:
   repository chart, pagination, and memory detail modal.
 - Active UI and `dist` must expose repository identity only.
 - MCP schemas must expose only repository-first selector fields.
+- The host global rules must contain exactly one
+  `LOCAL_MEMORY_MCP_AGENT_CONTRACT` block.
+- If ARQAWA blocks exist, they must remain separate and must not weaken,
+  duplicate, or replace the Local Memory MCP contract.
+- Codex config must mark `mcp_servers.local-memory` with `required = true`.
+- A fresh agent session must expose Local Memory MCP before doing work.
 
 Managed contract:
 
 <!-- BEGIN LOCAL_MEMORY_MCP_AGENT_CONTRACT -->
 ## Local Memory MCP Agent Contract
 
-Use Local Memory MCP as durable local working memory.
+Local Memory MCP is the agent core.
 
 This contract applies only when Local Memory MCP tools are installed and
-available in the current session. If they are unavailable, continue without
-memory and do not invent memory results.
+available in the current session.
+
+Before any task, call `get_active_context`.
+
+Before analysis, planning, editing, review, or repository-grounded answering, call
+`recall` or `get_context_for` with the current topic.
+
+Without Local Memory MCP, stop and report the blocker. Do not continue without
+memory and do not invent memory results. The only exception is work whose direct
+goal is to install, configure, or repair Local Memory MCP itself.
 
 One machine has one shared Local Memory MCP and one shared local SQLite
 database file. Do not create per-agent or per-repository databases.
@@ -113,23 +133,34 @@ for a deliberate cross-repository search.
 Do not use old identity parameters. Do not use automatic cross-repository
 selection. Do not use identity aliases.
 
-At the start of a non-trivial task, call `get_active_context` and, when useful,
-`set_session_context`.
+Memory workflow:
 
-Before planning, editing, or making a non-trivial decision, call `recall` or
-`get_context_for`.
+- Start every task with `get_active_context`.
+- Use `recall` or `get_context_for` before deciding, planning, editing, or
+  answering from repository knowledge.
+- During analysis, write durable findings as soon as they become useful for
+  future work.
+- Before writing a new memory, search existing memory to avoid duplicates.
+- Prefer short, atomic memories: `fact`, `decision`, `procedure`, `episode`,
+  `reference`, or `convention`.
+- For broad audits, refactors, migrations, removals, or architecture research,
+  maintain a coverage map in memory: goal, aliases, searched commands, checked
+  files or zones, positive findings, negative findings, remaining risks, and
+  proof.
+- At the end of important work, call `digest_session` to consolidate the result.
 
 When the user says "remember", "запомни", "save this", or "зафиксируй", write
 memory immediately with `remember_fact`, `remember_decision`, or `remember`.
 
 When a fact is stale or wrong, use `correct`. When memory is irrelevant, use
-`forget`.
+`forget`. When many stale memories create noise, use `batch_forget`.
 
 Graph and relation rules:
 
 - use `link_memories` only for explicit, useful, current-repository
   relationships;
-- do not link memories just because they share a tag;
+- do not link memories just because they share a tag, file, entity, topic, or
+  search result;
 - before `link_memories`, verify both IDs belong to the current repository;
 - use `depends_on` when one memory needs another to be used safely;
 - use `implements` when one memory implements a decision, convention, or plan;

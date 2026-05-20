@@ -9,7 +9,8 @@ export function registerRememberTools(server: McpServer, service: MemoryService)
   server.registerTool(
     "remember",
     {
-      description: "Record a memory in the current repository. Memories are repository-bound by default.",
+      description:
+        "Record a durable memory in the current repository. Use for useful facts, decisions, procedures, episodes, references, conventions, and coverage maps discovered during work. Search memory first to avoid duplicates.",
       inputSchema: {
         content: z.string().min(1).describe("The knowledge to remember"),
         memory_type: z.enum(memoryTypes).describe("fact, decision, procedure, episode, reference, or convention"),
@@ -51,7 +52,8 @@ export function registerRememberTools(server: McpServer, service: MemoryService)
   server.registerTool(
     "remember_fact",
     {
-      description: "Record an atomic fact in the current repository.",
+      description:
+        "Record an atomic durable fact in the current repository, including source-backed insights found during analysis.",
       inputSchema: {
         fact: z.string().min(1).describe("The atomic fact to remember"),
         tags: tagsArraySchema.describe("Classification tags"),
@@ -83,7 +85,8 @@ export function registerRememberTools(server: McpServer, service: MemoryService)
   server.registerTool(
     "remember_decision",
     {
-      description: "Record an architectural decision in the current repository.",
+      description:
+        "Record a durable architectural or workflow decision in the current repository, with context, rationale, and rejected alternatives.",
       inputSchema: {
         title: z.string().min(1).describe("Decision title"),
         context: z.string().min(1).describe("What prompted this decision"),

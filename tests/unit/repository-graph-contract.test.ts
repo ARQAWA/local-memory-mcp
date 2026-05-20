@@ -14,9 +14,27 @@ describe("repository graph contract", () => {
 
     expect(prompt).toContain("Graph and relation rules");
     expect(prompt).toContain("This contract applies only when Local Memory MCP tools are installed");
+    expect(prompt).toContain("Local Memory MCP is the agent core");
+    expect(prompt).toContain("Before any task, call `get_active_context`");
+    expect(prompt).toContain("Without Local Memory MCP, stop and report the blocker");
+    expect(prompt).toContain("maintain a coverage map in memory");
+    expect(prompt).toContain("At the end of important work, call `digest_session`");
     expect(prompt).toContain("do not link memories just because they share a tag");
     expect(prompt).toContain("entity overlap is a search signal");
     expect(prompt).toContain("prefer `correct` over manual `supersedes`");
+    expect(prompt).not.toContain("At the start of a non-" + "trivial task");
+    expect(prompt).not.toContain("when " + "useful");
+  });
+
+  test("README is human-facing and delegates agent behavior to install prompt", () => {
+    const readme = readProjectFile("README.md");
+
+    expect(readme).toContain("This README is for humans");
+    expect(readme).toContain("Agent behavior is defined by");
+    expect(readme).toContain("INSTALL_AGENT_PROMPT.md");
+    expect(readme).toContain("Do not copy this README as an agent contract");
+    expect(readme).not.toContain("Use memory when " + "it helps the task");
+    expect(readme).not.toContain("At the start of non-" + "trivial work");
   });
 
   test("ARQAWA install prompt bootstraps retrieval tooling without index tools", () => {
@@ -39,7 +57,34 @@ describe("repository graph contract", () => {
     expect(prompt).toContain("docker-langserver");
     expect(prompt).toContain("It does not install Local Memory MCP");
     expect(prompt).toContain("It does not configure memory MCP servers");
+    expect(prompt).toContain("It must preserve any existing `LOCAL_MEMORY_MCP_AGENT_CONTRACT` block");
+    expect(prompt).toContain("Local Memory MCP is the agent core");
     expect(prompt).toContain("must not install index-based tools such as `graphify` or `symlens`");
+  });
+
+  test("server and tool descriptions teach the memory core workflow", () => {
+    const server = readProjectFile("src/server.ts");
+    const recallTools = readProjectFile("src/tools/recall.ts");
+    const rememberTools = readProjectFile("src/tools/remember.ts");
+    const manageTools = readProjectFile("src/tools/manage.ts");
+    const sessionTools = readProjectFile("src/tools/session.ts");
+
+    expect(server).toContain("Local Memory MCP is the agent core");
+    expect(server).toContain("Before any task, call get_active_context");
+    expect(server).toContain("maintain a coverage map in memory");
+    expect(recallTools).toContain("Use before analysis, planning, editing, review");
+    expect(recallTools).toContain("Call before any task because Local Memory MCP is the agent core");
+    expect(rememberTools).toContain("coverage maps discovered during work");
+    expect(manageTools).toContain("Prefer this over writing a competing truth beside the old one");
+    expect(manageTools).toContain("Do not link just because memories share a tag");
+    expect(sessionTools).toContain("coverage, decisions, proof, and remaining risks");
+  });
+
+  test("install prompt requires Codex local-memory server", () => {
+    const prompt = readProjectFile("INSTALL_AGENT_PROMPT.md");
+
+    expect(prompt).toContain("set `required = true` for `mcp_servers.local-memory`");
+    expect(prompt).toContain("Codex config must mark `mcp_servers.local-memory` with `required = true`");
   });
 
   test("ID tools resolve repository scope before reading or writing", () => {

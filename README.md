@@ -2,6 +2,10 @@
 
 Local-only MCP memory server for AI coding agents.
 
+This README is for humans. Agent behavior is defined by
+`INSTALL_AGENT_PROMPT.md`, which installs the managed
+`LOCAL_MEMORY_MCP_AGENT_CONTRACT` into the target host's global instructions.
+
 ## Model
 
 - One machine has one Local Memory MCP install.
@@ -102,30 +106,17 @@ Maintenance and repair:
 - `reembed_memories`
 - `get_memory_analytics`
 
-## Agent Contract
+## Agent Instructions
 
-Use memory when it helps the task.
+The source of truth for agent behavior is `INSTALL_AGENT_PROMPT.md`.
 
-At the start of non-trivial work:
+The installer writes the managed `LOCAL_MEMORY_MCP_AGENT_CONTRACT` into the
+host global rules. That contract treats Local Memory MCP as the agent core:
+agents read memory before work, update durable findings during work, maintain
+coverage maps for broad audits, correct stale memories, forget noise, and
+consolidate important sessions.
 
-- call `get_active_context`;
-- call `recall` or `get_context_for` before important planning or edits;
-- call `set_session_context` only when the task context is worth saving.
-
-When the user says "remember", "запомни", or "зафиксируй", write memory
-immediately.
-
-Current user instructions and current repository files beat old memory. If a
-memory is stale, use `correct`. If it is irrelevant, use `forget`.
-
-Use graph links only for strong durable relationships. `link_memories` is for
-explicit current-repository edges, not for shared tags, shared files, or vague
-similarity. Use `get_related` for lineage, dependencies, alternatives, and
-conflicts. Use `query_entities` for file/API/package/error/env discovery.
-Normal recall stays token-efficient; full graph context is opt-in.
-
-Never store secrets, tokens, passwords, private keys, credentials, or private
-auth material.
+Do not copy this README as an agent contract.
 
 ## Install And Migration
 
