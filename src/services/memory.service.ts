@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
 import { withTransaction } from "../db/connection.js";
-import { ValidationError } from "../errors.js";
+import { ExternalServiceError, ValidationError } from "../errors.js";
 import { getRequestContextOrDefault, getSamplingService } from "../context.js";
 import type { AuditRepository } from "../repositories/audit.repository.js";
 import { AuditRepository as DefaultAuditRepository } from "../repositories/audit.repository.js";
@@ -36,7 +35,10 @@ import { EmbeddingQueue } from "./embedding-queue.js";
 import type { EmbeddingPurpose } from "./embedding.service.js";
 import { getEmbeddingProvider } from "./embedding.service.js";
 import { EntityExtractionService } from "./entity-extraction.service.js";
+import { LibrarianRunner, type LibrarianUse } from "./librarian.service.js";
 import { logger } from "./logger.js";
+import type { Reranker, RerankCandidateInput } from "./reranker.service.js";
+import { RERANKER_OPERATIONAL_ERROR } from "./reranker.service.js";
 import { compositeScore, generateSummary, scoreImportance, tokenBudget } from "./scoring.service.js";
 
 export interface MemoryServiceDeps {
@@ -47,10 +49,11 @@ export interface MemoryServiceDeps {
   dedup?: DedupService;
   embeddingQueue?: EmbeddingQueue | undefined;
   asyncEmbedding?: boolean | undefined;
+  reranker?: Reranker | undefined;
+  librarian?: LibrarianRunner | undefined;
 }
 
 type PrepareMode = "auto" | "light" | "deep";
-type LibrarianUse = "auto" | "never" | "always";
 type CorrectMemoryAction = "mark_wrong" | "mark_deprecated" | "mark_superseded" | "mark_needs_review" | "mark_current";
 
 interface PrepareContextInput {
@@ -100,6 +103,7 @@ interface ProjectCandidate {
   type: number;
   importance: number;
   recency: number;
+  rerank: number;
   score: number;
 }
 
@@ -112,6 +116,8 @@ export class MemoryService {
   private entityExtraction: EntityExtractionService;
   private embeddingQueue?: EmbeddingQueue | undefined;
   private asyncEmbedding: boolean;
+  private reranker?: Reranker | undefined;
+  private librarian: LibrarianRunner;
 
   constructor(deps?: MemoryServiceDeps) {
     this.memories = deps?.memories ?? new MemoryRepository();
@@ -122,6 +128,8 @@ export class MemoryService {
     this.entityExtraction = new EntityExtractionService(this.entities);
     this.embeddingQueue = deps?.embeddingQueue;
     this.asyncEmbedding = deps?.asyncEmbedding ?? false;
+    this.reranker = deps?.reranker;
+    this.librarian = deps?.librarian ?? new LibrarianRunner();
     if (this.embeddingQueue) {
       this.embeddingQueue.onEmbeddingReady = async (memoryId, embedding) => {
         await this.handlePostEmbeddingDedup(memoryId, embedding);
@@ -130,7 +138,7 @@ export class MemoryService {
   }
 
   async flushSync(): Promise<void> {
-    return Promise.resolve();
+    await this.reranker?.close();
   }
 
   async currentRepository(): Promise<RepositoryRecord> {
@@ -284,9 +292,8 @@ export class MemoryService {
       }
     }
 
-    if (modeUsed === "deep") {
-      candidates = await this.rerankCandidates(input.task, candidates);
-    }
+    candidates = await this.rerankProjectCandidates(this.contextQuery(input), candidates);
+    candidates = this.selectProjectCandidates(candidates, modeUsed);
 
     const budget = input.token_budget ?? (modeUsed === "deep" ? 3500 : 900);
     const fallback = this.buildContextPack(candidates, budget, modeUsed);
@@ -1050,7 +1057,7 @@ export class MemoryService {
     const query = this.contextQuery(input);
     const filters = { repository_id: repositoryId };
     const embedding = await this.generateEmbedding(query, "query");
-    const searchLimit = mode === "deep" ? 45 : 20;
+    const searchLimit = mode === "deep" ? 80 : 30;
     const fts = await this.memories.searchFts(query, filters, searchLimit);
     const semantic = embedding ? await this.memories.searchSemantic(embedding, filters, searchLimit) : [];
     const entity = await this.memories.searchByTagsEntitiesAndText(query, filters, searchLimit);
@@ -1061,17 +1068,17 @@ export class MemoryService {
     this.mergeCandidates(candidateMap, entity, "entity");
 
     if (mode === "deep") {
-      const typePrior = await this.memories.listByCardTypes(this.typePriorsForTask(input.task), filters, 30);
+      const typePrior = await this.memories.listByCardTypes(this.typePriorsForTask(input.task), filters, 50);
       this.mergeCandidates(candidateMap, typePrior, "type");
       const seedIds = [...candidateMap.values()]
         .sort((a, b) => Math.max(b.fts, b.vector, b.entity, b.type) - Math.max(a.fts, a.vector, a.entity, a.type))
-        .slice(0, 12)
+        .slice(0, 20)
         .map((candidate) => String(candidate.memory.id));
       const relations = await this.relations.findByEntries(seedIds, repositoryId, { activeOnly: false });
       const neighborIds = relations
         .map((relation) => (seedIds.includes(relation.source_id) ? relation.target_id : relation.source_id))
         .filter((id, index, ids) => !seedIds.includes(id) && ids.indexOf(id) === index);
-      const neighbors = await this.memories.findByIds(neighborIds, repositoryId);
+      const neighbors = await this.memories.findActiveByIds(neighborIds, repositoryId);
       const relationScore = new Map<string, number>();
       for (const relation of relations) {
         const id = seedIds.includes(relation.source_id) ? relation.target_id : relation.source_id;
@@ -1112,6 +1119,7 @@ export class MemoryService {
         type: 0,
         importance: memory.importance,
         recency: this.recencyScore(memory.updated_at),
+        rerank: 0,
         score: 0,
       } satisfies ProjectCandidate);
     current[source] = Math.max(current[source], score);
@@ -1136,7 +1144,7 @@ export class MemoryService {
         return { ...candidate, score: Math.max(0, base + this.statusModifier(candidate.memory.status)) };
       })
       .sort((a, b) => b.score - a.score);
-    return this.dedupProjectCandidates(scored).slice(0, mode === "deep" ? 40 : 15);
+    return scored.slice(0, mode === "deep" ? 150 : 30);
   }
 
   private buildContextPack(
@@ -1191,19 +1199,28 @@ export class MemoryService {
     };
   }
 
-  private async rerankCandidates(task: string, candidates: ProjectCandidate[]): Promise<ProjectCandidate[]> {
-    if ((process.env["LOCAL_MEMORY_RERANKER"] ?? "none") !== "command") return candidates;
-    const command = process.env["LOCAL_MEMORY_RERANKER_CMD"]?.trim();
-    if (!command) return candidates;
-    const output = await this.runJsonCommand(command, { task, candidates: this.commandCandidates(candidates) }, 10_000);
-    const ids = this.idsFromCommandOutput(output);
-    if (ids.length === 0) return candidates;
+  private async rerankProjectCandidates(query: string, candidates: ProjectCandidate[]): Promise<ProjectCandidate[]> {
+    if (!this.reranker) {
+      throw new ExternalServiceError("Jina MLX reranker", `${RERANKER_OPERATIONAL_ERROR}: backend started without worker`);
+    }
+    if (candidates.length === 0) return [];
+    const rerankInput: RerankCandidateInput[] = candidates.map((candidate) => ({
+      id: candidate.memory.id,
+      text: this.rerankText(candidate.memory),
+    }));
+    const results = await this.reranker.rerank(query, rerankInput);
     const byId = new Map(candidates.map((candidate) => [String(candidate.memory.id), candidate]));
-    const ordered = ids
-      .map((id) => byId.get(id))
-      .filter((candidate): candidate is ProjectCandidate => Boolean(candidate));
-    const rest = candidates.filter((candidate) => !ids.includes(candidate.memory.id));
-    return [...ordered, ...rest];
+    const ordered: ProjectCandidate[] = [];
+    for (const result of results) {
+      const candidate = byId.get(result.id);
+      if (!candidate) continue;
+      ordered.push({ ...candidate, rerank: result.score, score: this.scoreWithRerank(candidate, result.score) });
+    }
+    const seen = new Set(ordered.map((candidate) => candidate.memory.id));
+    const rest = candidates
+      .filter((candidate) => !seen.has(candidate.memory.id))
+      .map((candidate) => ({ ...candidate, score: this.scoreWithRerank(candidate, candidate.rerank) }));
+    return this.sortByStatusAndScore([...ordered, ...rest]);
   }
 
   private async runLibrarian(
@@ -1211,24 +1228,14 @@ export class MemoryService {
     mode: "light" | "deep",
     candidates: ProjectCandidate[],
   ): Promise<PrepareContextOutput | null> {
-    const requested = input.use_librarian ?? "auto";
-    if (requested === "never") return null;
-    const envMode = process.env["LOCAL_MEMORY_LIBRARIAN_MODE"] ?? "off";
-    const command = process.env["LOCAL_MEMORY_LIBRARIAN_CMD"]?.trim();
-    const shouldRun =
-      Boolean(command) && (requested === "always" || envMode === "always" || (envMode === "auto" && mode === "deep"));
-    if (!shouldRun || !command) return null;
-    const timeout = Number(process.env["LOCAL_MEMORY_LIBRARIAN_TIMEOUT_MS"] ?? "30000");
-    const output = await this.runJsonCommand(
-      command,
-      { task: input.task, mode, candidates: this.commandCandidates(candidates) },
-      Number.isFinite(timeout) ? timeout : 30_000,
-    );
-    const sections = this.sectionsFromCommandOutput(output);
-    if (!sections) return null;
-    const usedIds = this.idsFromCommandOutput(output);
-    const confidence = this.numberField(output, "confidence") ?? this.confidenceFor(candidates);
-    const missingInfo = this.stringArrayField(output, "missing_info");
+    const output = await this.librarian.run({
+      task: input.task,
+      mode,
+      use: input.use_librarian,
+      candidates: this.commandCandidates(candidates),
+    });
+    if (!output) return null;
+    const { sections, used_memory_ids: usedIds, confidence, missing_info: missingInfo } = output;
     return {
       context_pack: Object.entries(sections)
         .filter(([, lines]) => lines.length > 0)
@@ -1240,40 +1247,6 @@ export class MemoryService {
       confidence,
       missing_info: missingInfo,
     };
-  }
-
-  private runJsonCommand(command: string, payload: unknown, timeoutMs: number): Promise<unknown> {
-    return new Promise((resolve) => {
-      const child = spawn(command, { shell: true, stdio: ["pipe", "pipe", "pipe"] });
-      let stdout = "";
-      let done = false;
-      const finish = (value: unknown): void => {
-        if (done) return;
-        done = true;
-        clearTimeout(timer);
-        resolve(value);
-      };
-      const timer = setTimeout(() => {
-        child.kill("SIGTERM");
-        finish(null);
-      }, timeoutMs);
-      child.stdout.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString("utf-8");
-      });
-      child.on("error", () => finish(null));
-      child.on("close", (code) => {
-        if (code !== 0) {
-          finish(null);
-          return;
-        }
-        try {
-          finish(JSON.parse(stdout) as unknown);
-        } catch {
-          finish(null);
-        }
-      });
-      child.stdin.end(JSON.stringify(payload));
-    });
   }
 
   private contextQuery(input: PrepareContextInput): string {
@@ -1297,8 +1270,40 @@ export class MemoryService {
     return base;
   }
 
+  private selectProjectCandidates(candidates: ProjectCandidate[], mode: "light" | "deep"): ProjectCandidate[] {
+    const sorted = this.sortByStatusAndScore(candidates);
+    if (mode === "light") return this.dedupProjectCandidates(sorted).slice(0, 10);
+    return this.mmrDedupCandidates(sorted, 80);
+  }
+
+  private scoreWithRerank(candidate: ProjectCandidate, rerankScore: number): number {
+    const normalizedRerank = Number.isFinite(rerankScore) ? Math.max(0, Math.min(1, (rerankScore + 1) / 2)) : 0;
+    return candidate.score * 0.35 + normalizedRerank * 0.65;
+  }
+
+  private sortByStatusAndScore(candidates: ProjectCandidate[]): ProjectCandidate[] {
+    return [...candidates].sort((a, b) => {
+      const statusDiff = this.statusRank(a.memory.status) - this.statusRank(b.memory.status);
+      if (statusDiff !== 0) return statusDiff;
+      return b.score - a.score;
+    });
+  }
+
+  private statusRank(status: MemoryStatus): number {
+    if (status === "current") return 0;
+    if (status === "candidate" || status === "needs_review") return 1;
+    if (status === "temporary") return 2;
+    return 3;
+  }
+
   private sectionForMemory(memory: Memory): string {
-    if (memory.status === "deprecated" || memory.status === "superseded" || memory.card_type === "legacy")
+    if (
+      memory.status === "deprecated" ||
+      memory.status === "superseded" ||
+      memory.status === "historical" ||
+      memory.status === "temporary" ||
+      memory.card_type === "legacy"
+    )
       return "Legacy";
     if (memory.card_type === "constraint") return "Hard rules";
     if (memory.card_type === "decision") return "Current decisions";
@@ -1347,6 +1352,53 @@ export class MemoryService {
     return result;
   }
 
+  private mmrDedupCandidates(candidates: ProjectCandidate[], limit: number): ProjectCandidate[] {
+    const pool = this.dedupProjectCandidates(candidates);
+    const selected: ProjectCandidate[] = [];
+    const selectedTerms: Set<string>[] = [];
+    while (pool.length > 0 && selected.length < limit) {
+      let bestIndex = 0;
+      let bestScore = Number.NEGATIVE_INFINITY;
+      for (let i = 0; i < pool.length; i += 1) {
+        const candidate = pool[i];
+        if (!candidate) continue;
+        const terms = this.textTerms(`${candidate.memory.summary}\n${candidate.memory.content}`);
+        const diversityPenalty = selectedTerms.length
+          ? Math.max(...selectedTerms.map((other) => this.jaccard(terms, other)))
+          : 0;
+        const mmrScore = candidate.score * 0.85 - diversityPenalty * 0.15 - this.statusRank(candidate.memory.status) * 0.01;
+        if (mmrScore > bestScore) {
+          bestScore = mmrScore;
+          bestIndex = i;
+        }
+      }
+      const [next] = pool.splice(bestIndex, 1);
+      if (!next) break;
+      selected.push(next);
+      selectedTerms.push(this.textTerms(`${next.memory.summary}\n${next.memory.content}`));
+    }
+    return selected;
+  }
+
+  private textTerms(text: string): Set<string> {
+    return new Set(
+      text
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}_./:-]+/u)
+        .filter((term) => term.length >= 3)
+        .slice(0, 80),
+    );
+  }
+
+  private jaccard(a: Set<string>, b: Set<string>): number {
+    if (a.size === 0 || b.size === 0) return 0;
+    let overlap = 0;
+    for (const term of a) {
+      if (b.has(term)) overlap += 1;
+    }
+    return overlap / (a.size + b.size - overlap);
+  }
+
   private recencyScore(value: Date): number {
     const ageMs = Date.now() - value.getTime();
     if (Number.isNaN(ageMs)) return 0;
@@ -1354,49 +1406,22 @@ export class MemoryService {
     return Math.min(1, Math.exp((-Math.LN2 * ageDays) / 45));
   }
 
-  private commandCandidates(candidates: ProjectCandidate[]): unknown[] {
+  private rerankText(memory: Memory): string {
+    return `${memory.summary}\n\n${memory.content}`.slice(0, 3_000);
+  }
+
+  private commandCandidates(candidates: ProjectCandidate[]): RerankCandidateInput[] {
     return candidates.slice(0, 40).map((candidate) => ({
       id: candidate.memory.id,
-      summary: candidate.memory.summary,
-      content: candidate.memory.content,
-      card_type: candidate.memory.card_type,
-      status: candidate.memory.status,
-      tags: candidate.memory.tags,
-      score: candidate.score,
+      text: JSON.stringify({
+        summary: candidate.memory.summary,
+        content: candidate.memory.content.slice(0, 2_000),
+        card_type: candidate.memory.card_type,
+        status: candidate.memory.status,
+        tags: candidate.memory.tags,
+        score: candidate.score,
+      }),
     }));
-  }
-
-  private idsFromCommandOutput(output: unknown): string[] {
-    if (!output || typeof output !== "object") return [];
-    const record = output as Record<string, unknown>;
-    for (const key of ["used_memory_ids", "ordered_ids", "ids"]) {
-      const value = record[key];
-      if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
-    }
-    return [];
-  }
-
-  private sectionsFromCommandOutput(output: unknown): Record<string, string[]> | null {
-    if (!output || typeof output !== "object") return null;
-    const sections = (output as Record<string, unknown>)["sections"];
-    if (!sections || typeof sections !== "object" || Array.isArray(sections)) return null;
-    const result: Record<string, string[]> = {};
-    for (const [key, value] of Object.entries(sections)) {
-      result[key] = Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-    }
-    return result;
-  }
-
-  private numberField(output: unknown, key: string): number | null {
-    if (!output || typeof output !== "object") return null;
-    const value = (output as Record<string, unknown>)[key];
-    return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : null;
-  }
-
-  private stringArrayField(output: unknown, key: string): string[] {
-    if (!output || typeof output !== "object") return [];
-    const value = (output as Record<string, unknown>)[key];
-    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
   }
 
   private normalizeCommitItem(item: string | CommitTaskItem): CommitTaskItem | null {

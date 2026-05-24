@@ -11,6 +11,7 @@ import { RelationRepository } from "../../src/repositories/relation.repository.j
 import { resetGitIdentityCache } from "../../src/services/git-identity.service.js";
 import { MemoryService } from "../../src/services/memory.service.js";
 import { resetEmbeddingProvider } from "../../src/services/embedding.service.js";
+import type { Reranker, RerankCandidateInput, RerankResult } from "../../src/services/reranker.service.js";
 import type { CardType, MemoryStatus, MemoryType } from "../../src/types/memory.js";
 
 let dir: string | null = null;
@@ -77,6 +78,36 @@ async function createMemory(
   });
   if (options?.tags?.length) await repo.setTags(memory.id, options.tags, repositoryId);
   return memory;
+}
+
+class TestReranker implements Reranker {
+  calls: { query: string; candidates: RerankCandidateInput[] }[] = [];
+  private readonly order?: string[] | undefined;
+
+  constructor(order?: string[]) {
+    this.order = order;
+  }
+
+  async start(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  async rerank(query: string, candidates: RerankCandidateInput[]): Promise<RerankResult[]> {
+    this.calls.push({ query, candidates });
+    const ordered = this.order
+      ? this.order.map((id) => candidates.find((candidate) => candidate.id === id)).filter((item): item is RerankCandidateInput => Boolean(item))
+      : [...candidates];
+    const rest = candidates.filter((candidate) => !ordered.some((item) => item.id === candidate.id));
+    return [...ordered, ...rest].map((candidate, index) => ({ id: candidate.id, score: 1 - index }));
+  }
+
+  async healthCheck(): Promise<RerankResult[]> {
+    return [{ id: "ok", score: 1 }];
+  }
+
+  async close(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 describe("project memory cards", () => {
@@ -212,7 +243,7 @@ describe("project memory cards", () => {
       status: "wrong",
     });
 
-    const result = await new MemoryService().prepareContext({
+    const result = await new MemoryService({ reranker: new TestReranker() }).prepareContext({
       task: "security architecture migration",
       mode: "deep",
       repository: repository.slug,
@@ -248,13 +279,15 @@ describe("project memory cards", () => {
       description: "deep context relation",
     });
 
-    const service = new MemoryService();
+    const reranker = new TestReranker();
+    const service = new MemoryService({ reranker });
     const light = await service.prepareContext({ task: "alpha", mode: "light", repository: repository.slug });
     const deep = await service.prepareContext({ task: "alpha migration", mode: "deep", repository: repository.slug });
 
     expect(light.used_memory_ids).toContain(seed.id);
     expect(light.used_memory_ids).not.toContain(neighbor.id);
     expect(deep.used_memory_ids).toContain(neighbor.id);
+    expect(reranker.calls).toHaveLength(2);
   });
 
   test("auto mode uses deep retrieval for auth security migration tasks", async () => {
@@ -266,7 +299,7 @@ describe("project memory cards", () => {
       cardType: "architecture",
     });
 
-    const result = await new MemoryService().prepareContext({
+    const result = await new MemoryService({ reranker: new TestReranker() }).prepareContext({
       task: "auth security migration review",
       mode: "auto",
       repository: repository.slug,
@@ -275,7 +308,52 @@ describe("project memory cards", () => {
     expect(result.mode_used).toBe("deep");
   });
 
-  test("librarian command failures fall back to local prepare_context", async () => {
+  test("light mode calls mandatory reranker and reranker can change order", async () => {
+    await runMigrations();
+    const repo = new MemoryRepository();
+    const repository = await ensureRepo(repo, "rerank-repo");
+    const first = await createMemory(repo, repository.id, "alpha low priority", {
+      memoryType: "fact",
+      cardType: "fact",
+      importance: 0.2,
+    });
+    const second = await createMemory(repo, repository.id, "alpha high priority", {
+      memoryType: "fact",
+      cardType: "fact",
+      importance: 0.9,
+    });
+    const reranker = new TestReranker([first.id, second.id]);
+
+    const result = await new MemoryService({ reranker }).prepareContext({
+      task: "alpha",
+      mode: "light",
+      repository: repository.slug,
+    });
+
+    expect(reranker.calls).toHaveLength(1);
+    expect(reranker.calls[0]?.candidates.length).toBeGreaterThanOrEqual(2);
+    expect(result.used_memory_ids.slice(0, 2)).toEqual([first.id, second.id]);
+  });
+
+  test("prepare_context fails when backend has no mandatory reranker", async () => {
+    await runMigrations();
+    const repo = new MemoryRepository();
+    const repository = await ensureRepo(repo, "missing-reranker-repo");
+    await createMemory(repo, repository.id, "alpha memory", {
+      memoryType: "fact",
+      cardType: "fact",
+    });
+
+    await expect(
+      new MemoryService().prepareContext({
+        task: "alpha",
+        mode: "light",
+        repository: repository.slug,
+      }),
+    ).rejects.toThrow("memory is not operational without Jina MLX reranker");
+  });
+
+  test("librarian auto command failures fall back to local prepare_context", async () => {
     await runMigrations();
     const repo = new MemoryRepository();
     const repository = await ensureRepo(repo, "fallback-repo");
@@ -283,18 +361,39 @@ describe("project memory cards", () => {
       memoryType: "reference",
       cardType: "architecture",
     });
-    process.env["LOCAL_MEMORY_LIBRARIAN_MODE"] = "always";
+    process.env["LOCAL_MEMORY_LIBRARIAN_MODE"] = "auto";
     process.env["LOCAL_MEMORY_LIBRARIAN_CMD"] = 'node -e "process.exit(2)"';
 
-    const result = await new MemoryService().prepareContext({
+    const result = await new MemoryService({ reranker: new TestReranker() }).prepareContext({
       task: "architecture migration",
       mode: "deep",
       repository: repository.slug,
-      use_librarian: "always",
+      use_librarian: "auto",
     });
 
     expect(result.context_pack).toContain("Fallback architecture memory");
     expect(result.mode_used).toBe("deep");
+  });
+
+  test("librarian always command failure is a clear error", async () => {
+    await runMigrations();
+    const repo = new MemoryRepository();
+    const repository = await ensureRepo(repo, "librarian-error-repo");
+    await createMemory(repo, repository.id, "Architecture memory", {
+      memoryType: "reference",
+      cardType: "architecture",
+    });
+    process.env["LOCAL_MEMORY_LIBRARIAN_MODE"] = "always";
+    process.env["LOCAL_MEMORY_LIBRARIAN_CMD"] = 'node -e "process.exit(2)"';
+
+    await expect(
+      new MemoryService({ reranker: new TestReranker() }).prepareContext({
+        task: "architecture migration",
+        mode: "deep",
+        repository: repository.slug,
+        use_librarian: "always",
+      }),
+    ).rejects.toThrow("Librarian subagent");
   });
 
   test("commit_task writes durable cards once", async () => {

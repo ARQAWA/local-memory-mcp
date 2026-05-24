@@ -11,8 +11,10 @@ function readProjectFile(path: string): string {
 describe("backend-only contract", () => {
   test("web and admin UI source files are removed", () => {
     for (const path of [
+      "public",
       "public/index.html",
       "public/admin.html",
+      "src/api",
       "src/api/routes.ts",
       "src/api/admin-routes.ts",
       "bin/local-memory-web.sh",
@@ -32,9 +34,12 @@ describe("backend-only contract", () => {
     expect(pkg.bin).toEqual({ "local-memory-mcp": "dist/index.js" });
     expect(pkg.scripts).not.toHaveProperty("web");
     expect(pkg.scripts).not.toHaveProperty("dev:web");
+    expect(pkg.scripts).toHaveProperty("setup:reranker");
+    expect(pkg.scripts).toHaveProperty("doctor");
     expect(pkg.dependencies).not.toHaveProperty("express");
     expect(pkg.dependencies).not.toHaveProperty("helmet");
     expect(pkg.devDependencies).not.toHaveProperty("@types/express");
+    expect(JSON.stringify(pkg)).not.toContain("hono");
   });
 
   test("runtime entry point is stdio-only", () => {

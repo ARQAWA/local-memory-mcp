@@ -9,47 +9,46 @@ function readProjectFile(path: string): string {
 }
 
 describe("repository graph contract", () => {
-  test("install prompt teaches manual edge rules", () => {
+  test("install prompt teaches the public context-pack memory contract", () => {
     const prompt = readProjectFile("INSTALL_AGENT_PROMPT.md");
+    const contract = prompt.slice(
+      prompt.indexOf("<!-- BEGIN LOCAL_MEMORY_MCP_AGENT_CONTRACT -->"),
+      prompt.indexOf("<!-- END LOCAL_MEMORY_MCP_AGENT_CONTRACT -->"),
+    );
 
-    expect(prompt).toContain("Graph and relation rules");
     expect(prompt).toContain("If this contract is present, Local Memory MCP is required");
     expect(prompt).toContain("Do not treat missing");
-    expect(prompt).toContain("Local Memory MCP is the agent core");
-    expect(prompt).toContain("Before any task, call `get_active_context`");
+    expect(prompt).toContain("Local Memory MCP is the agent's project memory backend");
     expect(prompt).toContain("prepare_context(auto)");
     expect(prompt).toContain("prepare_context(light)");
+    expect(prompt).toContain("Work from the returned `context_pack`");
+    expect(prompt).toContain("Do not read raw memory records directly");
     expect(prompt).toContain("commit_task");
     expect(prompt).toContain("correct_memory");
     expect(prompt).toContain("Do not store agent guesses as `current` truth");
     expect(prompt).toContain("Without Local Memory MCP, stop and report the blocker");
     expect(prompt).toContain("Memory-Controlled Completion Protocol");
-    expect(prompt).toContain("Task Working Memory Protocol");
-    expect(prompt).toContain("open_task_memory");
-    expect(prompt).toContain("update_task_memory");
-    expect(prompt).toContain("get_task_memory");
-    expect(prompt).toContain("close_task_memory");
-    expect(prompt).toContain("routes/endpoints, services, repositories, clients, permissions/auth");
-    expect(prompt).toContain("Use `set_session_context` only as lightweight current-work context");
     expect(prompt).toContain("requirements traceability matrix");
-    expect(prompt).toContain("maintain a coverage map in memory");
+    expect(prompt).toContain("Use `prepare_context(auto)` before planning the work");
     expect(prompt).toContain("Run negative checks");
     expect(prompt).toContain("Run conflict checks");
     expect(prompt).toContain("runtime or active-install proof");
     expect(prompt).toContain("red-team pass");
-    expect(prompt).toContain("close Task Working Memory with");
-    expect(prompt).toContain("Task memory has three layers");
-    expect(prompt).toContain("TTL 30 days by default");
-    expect(prompt).toContain("5 days when `task_kind=microtask`");
-    expect(prompt).toContain("durable_summary");
-    expect(prompt).toContain("Do not promote administrative task text");
-    expect(prompt).toContain("do not link memories just because they share a tag");
-    expect(prompt).toContain("entity overlap is a search signal");
-    expect(prompt).toContain("prefer `correct` over manual `supersedes`");
+    expect(prompt).toContain("Useful tools:");
+    expect(prompt).toContain("The Jina MLX reranker is mandatory");
+    expect(prompt).toContain("pnpm run setup:reranker");
+    expect(prompt).toContain("pnpm run doctor");
+    expect(prompt).toContain("MCP schemas must expose only");
+    expect(prompt).toContain("MCP schemas must not expose raw memory read, write, graph, or maintenance");
     expect(prompt).not.toContain("installed and available");
     expect(prompt).not.toContain("This contract applies only");
     expect(prompt).not.toContain("At the start of a non-" + "trivial task");
     expect(prompt).not.toContain("when " + "useful");
+    expect(contract).not.toContain("Before any task, call `get_active_context`");
+    expect(contract).not.toContain("Task Working Memory Protocol");
+    expect(contract).not.toContain("open_task_memory");
+    expect(contract).not.toContain("recall`");
+    expect(contract).not.toContain("get_context_for");
   });
 
   test("README is human-facing and delegates agent behavior to install prompt", () => {
@@ -59,20 +58,18 @@ describe("repository graph contract", () => {
     expect(readme).toContain("Agent behavior is defined by");
     expect(readme).toContain("INSTALL_AGENT_PROMPT.md");
     expect(readme).toContain("Do not copy this README as an agent contract");
-    expect(readme).toContain("Project-memory tools");
     expect(readme).toContain("prepare_context");
     expect(readme).toContain("commit_task");
     expect(readme).toContain("correct_memory");
-    expect(readme).toContain("open_task_memory");
-    expect(readme).toContain("update_task_memory");
-    expect(readme).toContain("get_task_memory");
-    expect(readme).toContain("close_task_memory");
-    expect(readme).toContain("Task Working Memory has three layers");
-    expect(readme).toContain("TTL 30 days by default");
-    expect(readme).toContain("5 days");
-    expect(readme).toContain("durable memory only for reusable");
+    expect(readme).toContain("Raw memory tools are not public");
+    expect(readme).toContain("jinaai/jina-reranker-v3-mlx");
+    expect(readme).toContain("There is no fallback or none mode");
+    expect(readme).toContain("pnpm run setup:reranker");
+    expect(readme).toContain("pnpm run doctor");
     expect(readme).not.toContain("Use memory when " + "it helps the task");
     expect(readme).not.toContain("At the start of non-" + "trivial work");
+    expect(readme).not.toContain("LOCAL_MEMORY_RERANKER=none");
+    expect(readme).not.toContain("open_task_memory");
   });
 
   test("ARQAWA install prompt bootstraps retrieval tooling without index tools", () => {
@@ -98,7 +95,6 @@ describe("repository graph contract", () => {
     expect(prompt).toContain("mcp_servers.local-memory");
     expect(prompt).toContain("required = true");
     expect(prompt).toContain("It must preserve any existing `LOCAL_MEMORY_MCP_AGENT_CONTRACT` block");
-    expect(prompt).toContain("Local Memory MCP is the agent core");
     expect(prompt).toContain("This does not disable Local Memory MCP reads");
     expect(prompt).toContain("These efficiency rules never override required Local Memory MCP calls");
     expect(prompt).toContain("Temporary Handoff Files");
@@ -112,58 +108,37 @@ describe("repository graph contract", () => {
     expect(prompt).not.toContain("$HOME/.local/share/local-memory-mcp/ARQAWA_WORK_GLOBAL_RULES.md");
   });
 
-  test("server and tool descriptions teach the memory core workflow", () => {
+  test("server and tool registry expose only the context-pack workflow", () => {
     const server = readProjectFile("src/server.ts");
-    const recallTools = readProjectFile("src/tools/recall.ts");
-    const rememberTools = readProjectFile("src/tools/remember.ts");
-    const manageTools = readProjectFile("src/tools/manage.ts");
     const projectMemoryTools = readProjectFile("src/tools/project-memory.ts");
-    const sessionTools = readProjectFile("src/tools/session.ts");
-    const taskMemoryTools = readProjectFile("src/tools/task-memory.ts");
     const toolsIndex = readProjectFile("src/tools/index.ts");
 
     expect(server).toContain("Local Memory MCP is the agent core");
-    expect(server).toContain("Before any task, call get_active_context");
     expect(server).toContain("prepare_context(auto)");
+    expect(server).toContain("Work from the returned context_pack");
     expect(server).toContain("commit_task");
     expect(server).toContain("correct_memory");
-    expect(server).toContain("Task Working Memory workbench");
-    expect(server).toContain("open_task_memory");
-    expect(server).toContain("one TTL task artifact");
-    expect(server).toContain("use digest_session only for separate session-level consolidation");
-    expect(server).toContain("routes/endpoints, services, repositories, clients, permissions/auth");
-    expect(server).toContain("maintain a coverage map in memory");
-    expect(server).toContain("Memory-Controlled Completion Protocol");
-    expect(server).toContain("negative loophole checks");
-    expect(server).toContain("conflict checks");
-    expect(server).toContain("red-team pass");
-    expect(recallTools).toContain("Use before analysis, planning, editing, review");
-    expect(recallTools).toContain("Call before any task because Local Memory MCP is the agent core");
-    expect(rememberTools).toContain("requirements traceability matrices");
-    expect(manageTools).toContain("Prefer this over writing a competing truth beside the old one");
-    expect(manageTools).toContain("Do not link just because memories share a tag");
+    expect(server).toContain("Public tools are intentionally limited");
+    expect(server).toContain("Jina MLX reranker");
+    expect(server).not.toContain("get_active_context");
+    expect(server).not.toContain("open_task_memory");
+    expect(server).not.toContain("recall or get_context_for");
     expect(projectMemoryTools).toContain("registerProjectMemoryTools");
     expect(projectMemoryTools).toContain("prepare_context");
     expect(projectMemoryTools).toContain("commit_task");
     expect(projectMemoryTools).toContain("correct_memory");
-    expect(projectMemoryTools).toContain("optional librarian fallback");
-    expect(sessionTools).toContain("requirements coverage, decisions, red-team findings");
-    expect(sessionTools).toContain("open_task_memory/update_task_memory/close_task_memory");
-    expect(taskMemoryTools).toContain("registerTaskMemoryTools");
-    expect(taskMemoryTools).toContain("Task Working Memory");
-    expect(taskMemoryTools).toContain("discovery_map");
-    expect(taskMemoryTools).toContain("layer_implementation_plan");
-    expect(taskMemoryTools).toContain("durable_extract");
-    expect(taskMemoryTools).toContain("artifact_ttl_days");
-    expect(taskMemoryTools).toContain("task_kind");
-    expect(taskMemoryTools).toContain("microtask");
-    expect(taskMemoryTools).toContain("durable_memory_type");
-    expect(taskMemoryTools).toContain("task-artifact");
-    expect(taskMemoryTools).toContain("durable-promotion");
-    expect(taskMemoryTools).not.toContain("service.digestSession");
-    expect(taskMemoryTools).not.toContain("Task slug:");
-    expect(toolsIndex).toContain("registerTaskMemoryTools");
+    expect(projectMemoryTools).toContain("mandatory local Jina MLX reranker");
     expect(toolsIndex).toContain("registerProjectMemoryTools");
+    for (const banned of [
+      "registerRecallTools",
+      "registerRememberTools",
+      "registerManageTools",
+      "registerTaskMemoryTools",
+      "registerBlockTools",
+      "registerEnterpriseTools",
+    ]) {
+      expect(toolsIndex).not.toContain(banned);
+    }
   });
 
   test("install prompt requires Codex local-memory server", () => {
@@ -171,16 +146,6 @@ describe("repository graph contract", () => {
 
     expect(prompt).toContain("set `required = true` for `mcp_servers.local-memory`");
     expect(prompt).toContain("Codex config must mark `mcp_servers.local-memory` with `required = true`");
-  });
-
-  test("ID tools resolve repository scope before reading or writing", () => {
-    const recallTools = readProjectFile("src/tools/recall.ts");
-    const manageTools = readProjectFile("src/tools/manage.ts");
-
-    expect(recallTools).toContain("const resolved = await service.resolveRepository");
-    expect(recallTools).toContain("await service.getMemory(id, resolved.repository_id");
-    expect(manageTools).toContain("const repository = await service.currentRepository()");
-    expect(manageTools).toContain("repository.id");
   });
 
   test("SQLite schema keeps repository graph, FTS, vector tables, and card migration", () => {

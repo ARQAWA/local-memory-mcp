@@ -2,8 +2,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { MemoryService } from "./services/memory.service.js";
 import { SamplingService } from "./services/sampling.service.js";
 import { registerAllTools } from "./tools/index.js";
-import { registerAllResources } from "./resources/index.js";
-import { registerAllPrompts } from "./prompts/index.js";
 
 export interface McpServerWithSampling {
   mcpServer: McpServer;
@@ -14,19 +12,15 @@ const SERVER_INSTRUCTIONS = `Local Memory MCP is the agent core, a local persist
 
 Memory is global on this host but partitioned by repository. Normal reads and writes use the current project, which can be a Git repository or a plain local folder.
 
-Before any task, call get_active_context. Before non-trivial analysis, planning, editing, review, or repository-grounded answering, call prepare_context(auto) with the current task. Use prepare_context(light) for micro-details. Use recall or get_context_for only when direct legacy memory records are needed. If memory tools are missing or unavailable, stop unless the direct task is to install, configure, or repair Local Memory MCP itself.
+Before non-trivial analysis, planning, editing, review, or repository-grounded answering, call prepare_context(auto) with the current task. Use prepare_context(light) for micro-details and narrow follow-up facts. Work from the returned context_pack; do not read raw memory records.
 
-For any task that needs discovery, planning, edits, tests, review, or more than one meaningful step, open a Task Working Memory scratch block with open_task_memory after initial recall. Keep it updated with update_task_memory while you discover code by layers, analyze, design, reject options, implement, test, review, and track risks. Use layered discovery for routes/endpoints, services, repositories, clients, permissions/auth, configs, tests, data contracts, docs, active install, and runtime when relevant. Before reporting done, close it with close_task_memory: delete scratch by default, keep one TTL task artifact, and promote durable knowledge only when it is reusable.
+At the end of a task, call commit_task with only reusable durable decisions, constraints, processes, gotchas, and roadmap items. Empty fields are ignored. Correct stale, wrong, deprecated, superseded, or uncertain cards with correct_memory.
 
-Search another repository only when the user explicitly asks for it. Then use repository_mode=specific with a repository slug, or repository_mode=all for a deliberate cross-repository search.
-
-Record durable findings during work with commit_task, remember, remember_fact, or remember_decision. Use commit_task at the end of a task for durable decisions, constraints, processes, gotchas, and roadmap items. Do not store secrets or agent guesses as current truth. For broad audits, refactors, migrations, removals, agent-instruction changes, or architecture research, maintain a coverage map in memory: goal, acceptance criteria, aliases, searched commands, checked files or zones, positive findings, negative findings, remaining risks, and proof. Before reporting done, run the Memory-Controlled Completion Protocol: close the requirements matrix, run positive checks, negative loophole checks, conflict checks, runtime or active-install proof when relevant, and a red-team pass that asks how the work could still be incomplete. Correct stale card status with correct_memory; use correct only when corrected text must supersede old text. Remove irrelevant memory with forget or batch_forget. When a Task Working Memory workbench is open, close it with close_task_memory; use digest_session only for separate session-level consolidation.
+Do not store secrets, tokens, passwords, private keys, credentials, or private auth material. Do not store agent guesses as current truth; use candidate or needs_review through commit_task metadata only when the uncertainty is useful.
 
 Project memory cards use card_type and status. Status is more important than score: wrong cards are dropped; deprecated and superseded cards appear only in the Legacy section; candidate and needs_review are not current truth.
 
-Use graph tools only for strong durable relationships. Create manual edges with link_memories only when both memory IDs are in the current repository and the relation is explicit, useful, and stronger than shared tags or shared entities. Use get_related for drill-down. Use query_entities for file/API/package/error/env discovery. Full graph context is for explicit graph, lineage, dependency, alternative, conflict, history, or broad related-context requests.
-
-Use list_repositories to discover known repositories. Use get_repository_overview and get_memory_stats for repository health.`;
+Public tools are intentionally limited to prepare_context, commit_task, and correct_memory. Retrieval requires the local Jina MLX reranker; memory is not operational without it.`;
 
 export function createMcpServer(service: MemoryService, version = "3.5.0"): McpServerWithSampling {
   const server = new McpServer(
@@ -45,8 +39,6 @@ export function createMcpServer(service: MemoryService, version = "3.5.0"): McpS
   const samplingService = new SamplingService(server.server);
 
   registerAllTools(server, service);
-  registerAllResources(server, service);
-  registerAllPrompts(server);
 
   return { mcpServer: server, samplingService };
 }

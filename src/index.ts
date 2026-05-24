@@ -7,6 +7,7 @@ import { loadConfig } from "./config.js";
 import { createMcpServer } from "./server.js";
 import { MemoryService } from "./services/memory.service.js";
 import { EmbeddingQueue } from "./services/embedding-queue.js";
+import { JinaRerankerService } from "./services/reranker.service.js";
 import { logger } from "./services/logger.js";
 import { runMigrations } from "./db/migrate.js";
 import { closeDb } from "./db/connection.js";
@@ -36,8 +37,11 @@ process.on("unhandledRejection", (reason: unknown) => {
 async function createMemoryService(config = loadConfig()): Promise<{
   service: MemoryService;
   embeddingQueue: EmbeddingQueue | undefined;
+  reranker: JinaRerankerService;
 }> {
   await runMigrations();
+  const reranker = new JinaRerankerService();
+  await reranker.start();
 
   let embeddingQueue: EmbeddingQueue | undefined;
   if (config.asyncEmbedding) {
@@ -50,9 +54,10 @@ async function createMemoryService(config = loadConfig()): Promise<{
   const service = new MemoryService({
     embeddingQueue,
     asyncEmbedding: config.asyncEmbedding,
+    reranker,
   });
 
-  return { service, embeddingQueue };
+  return { service, embeddingQueue, reranker };
 }
 
 async function startStdio(): Promise<void> {

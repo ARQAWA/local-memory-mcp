@@ -23,7 +23,7 @@ export function registerProjectMemoryTools(server: McpServer, service: MemorySer
     "prepare_context",
     {
       description:
-        "Prepare a compact project-memory context pack for the next task. Uses light retrieval for small details, deep retrieval for high-risk work, status-aware scoring, optional reranking, and optional librarian fallback.",
+        "Prepare a compact project-memory context pack for the next task. Light and deep retrieval both use the mandatory local Jina MLX reranker; deep mode can optionally use a librarian subagent after reranking.",
       inputSchema: {
         task: z.string().min(1).describe("Task or question to prepare context for"),
         mode: z.enum(["auto", "light", "deep"]).default("auto"),
@@ -31,7 +31,7 @@ export function registerProjectMemoryTools(server: McpServer, service: MemorySer
         working_context: z.string().optional().describe("Extra current work context"),
         changed_files: z.array(z.string()).max(100).optional().describe("Files already known to be relevant"),
         token_budget: z.number().int().min(100).max(64000).optional().describe("Context pack budget"),
-        use_librarian: z.enum(["auto", "never", "always"]).default("auto"),
+        use_librarian: z.enum(["auto", "never", "always"]).default("auto").describe("Per-call librarian preference"),
       },
       annotations: {
         title: "Prepare Project Context",
