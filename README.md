@@ -1,6 +1,6 @@
 # Local Memory MCP
 
-Local-only MCP memory server for AI coding agents.
+Local-only MCP backend for lightweight project memory.
 
 This README is for humans. Agent behavior is defined by
 `INSTALL_AGENT_PROMPT.md`, which installs the managed
@@ -18,27 +18,10 @@ This README is for humans. Agent behavior is defined by
   because identity is rooted in the canonical project path.
 - Cross-repository reads are explicit: use `repository_mode=specific` or
   `repository_mode=all`.
-- The Web UI is a global viewer. If it is started outside a project folder, it
-  shows all repositories by default and does not invent a current repo.
+- There is no browser UI, admin UI, or web route surface.
 
 There is no per-agent database, per-repository database, or alternate identity
 layer.
-
-Default local URLs:
-
-- Web UI: `http://127.0.0.1:13765/ui`
-- Admin UI: `http://127.0.0.1:13765/admin`
-
-The Web UI keeps the full viewer shell:
-
-- `Dashboard`
-- `Memories`
-- `Search`
-- `Graph`
-
-The Web UI is repository-first. It defaults to all repositories because the Web
-server has no current project context. Selecting one repository switches reads
-to `repository_mode=specific`.
 
 Repository identity rows are hardened:
 
@@ -47,22 +30,36 @@ Repository identity rows are hardened:
 - repository metadata must be a JSON object;
 - repository metadata must include `identity_kind`.
 
-Search is repository-correct:
+Project memory cards add these fields on `memories`:
 
-- current/specific semantic search uses an exact per-repository candidate scan;
-- explicit all-repository semantic search can scan the shared vector table;
-- FTS, tags, entities, relations, and list reads keep repository-keyed indexes.
+- `card_type`
+- `status`
+- `source_type`
+- `confidence`
+- `anchors_json`
+- `metadata_json`
+- `supersedes_id`
 
-The Admin UI keeps:
+Legacy `memory_type` remains for old tools and old SQLite data. New cards map
+legacy types to card types:
 
-- `Dashboard`
-- `All Memories`
-- period selector
-- repository chart
-- memory table pagination
-- memory detail modal
+- `decision` -> `decision`
+- `procedure` -> `process`
+- `convention` -> `constraint`
+- `episode` -> `gotcha`
+- `reference` -> `reference`
+- all other old types -> `fact`
+
+Status controls retrieval. `wrong` cards are dropped. `deprecated` and
+`superseded` cards are shown only in the `Legacy` section of `prepare_context`.
 
 ## Tools
+
+Project-memory tools:
+
+- `prepare_context`
+- `commit_task`
+- `correct_memory`
 
 Core read tools:
 
@@ -110,15 +107,64 @@ Maintenance and repair:
 - `reembed_memories`
 - `get_memory_analytics`
 
+## Retrieval
+
+`prepare_context(light)` uses FTS, semantic search, tags, and entities. It does
+not use a subagent or graph expansion. It returns 10-15 cards and targets a
+900-token pack by default.
+
+`prepare_context(deep)` classifies the task, extracts query terms, uses FTS,
+semantic search, tags/entities, type-prior search, relation expansion depth 1,
+score fusion, optional reranking, MMR-style deduplication, and status sections.
+It targets a 3500-token pack by default.
+
+`prepare_context(auto)` uses deep mode for auth, security, billing, migration,
+architecture, debugging, and refactoring work. It starts light for smaller
+detail questions, then escalates to deep if confidence is low or conflict
+signals appear.
+
+Score fusion weights:
+
+- FTS: `0.35`
+- vector: `0.35`
+- tags/entities and relation neighbors: `0.10`
+- type prior: `0.10`
+- importance: `0.05`
+- recency: `0.05`
+
+Status modifiers:
+
+- `current`: `+0.20`
+- `candidate`: `-0.15`
+- `needs_review`: `-0.20`
+- `deprecated`: `-0.50`
+- `superseded`: `-0.60`
+- `wrong`: dropped
+
+Optional reranker:
+
+- `LOCAL_MEMORY_RERANKER=none|command`
+- `LOCAL_MEMORY_RERANKER_CMD`
+
+Optional librarian:
+
+- `LOCAL_MEMORY_LIBRARIAN_MODE=off|auto|always`
+- `LOCAL_MEMORY_LIBRARIAN_CMD`
+- `LOCAL_MEMORY_LIBRARIAN_TIMEOUT_MS=30000`
+
+If a reranker or librarian command fails, `prepare_context` falls back to local
+retrieval.
+
 ## Agent Instructions
 
 The source of truth for agent behavior is `INSTALL_AGENT_PROMPT.md`.
 
 The installer writes the managed `LOCAL_MEMORY_MCP_AGENT_CONTRACT` into the
 host global rules. That contract treats Local Memory MCP as the agent core:
-agents read memory before work, update durable findings during work, maintain
-Task Working Memory for multi-step tasks, maintain coverage maps for broad
-audits, correct stale memories, forget noise, and close task work safely.
+agents call `prepare_context(auto)` before non-trivial tasks, use
+`prepare_context(light)` for micro-details, commit durable task learnings with
+`commit_task`, avoid writing secrets, avoid storing guesses as current truth,
+maintain Task Working Memory for multi-step tasks, and correct stale cards.
 
 Task Working Memory has three layers:
 
@@ -138,12 +184,11 @@ Use `INSTALL_AGENT_PROMPT.md` for a fresh install or reinstall.
 The installer must:
 
 - clean stale `dist` output before build;
+- install dependencies;
+- run typecheck, lint, and tests;
+- build the MCP backend;
 - run migrations;
+- create a SQLite backup before pending migrations;
 - create or reuse the local SQLite database file;
-- restart the active local Web server;
-- verify `/api/repositories`;
-- verify Web UI default `All repositories`;
-- verify `repository_mode=all`;
-- verify `/ui/` has `Dashboard`, `Memories`, `Search`, and `Graph`;
-- verify `/admin` has `Dashboard` and `All Memories`;
-- verify a fresh MCP session exposes only repository-first fields.
+- link `local-memory-mcp` into `$HOME/.local/bin`;
+- verify a fresh MCP session exposes project-memory tools.

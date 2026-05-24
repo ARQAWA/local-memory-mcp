@@ -17,6 +17,11 @@ describe("repository graph contract", () => {
     expect(prompt).toContain("Do not treat missing");
     expect(prompt).toContain("Local Memory MCP is the agent core");
     expect(prompt).toContain("Before any task, call `get_active_context`");
+    expect(prompt).toContain("prepare_context(auto)");
+    expect(prompt).toContain("prepare_context(light)");
+    expect(prompt).toContain("commit_task");
+    expect(prompt).toContain("correct_memory");
+    expect(prompt).toContain("Do not store agent guesses as `current` truth");
     expect(prompt).toContain("Without Local Memory MCP, stop and report the blocker");
     expect(prompt).toContain("Memory-Controlled Completion Protocol");
     expect(prompt).toContain("Task Working Memory Protocol");
@@ -54,7 +59,10 @@ describe("repository graph contract", () => {
     expect(readme).toContain("Agent behavior is defined by");
     expect(readme).toContain("INSTALL_AGENT_PROMPT.md");
     expect(readme).toContain("Do not copy this README as an agent contract");
-    expect(readme).toContain("Task Working Memory for multi-step tasks");
+    expect(readme).toContain("Project-memory tools");
+    expect(readme).toContain("prepare_context");
+    expect(readme).toContain("commit_task");
+    expect(readme).toContain("correct_memory");
     expect(readme).toContain("open_task_memory");
     expect(readme).toContain("update_task_memory");
     expect(readme).toContain("get_task_memory");
@@ -109,12 +117,16 @@ describe("repository graph contract", () => {
     const recallTools = readProjectFile("src/tools/recall.ts");
     const rememberTools = readProjectFile("src/tools/remember.ts");
     const manageTools = readProjectFile("src/tools/manage.ts");
+    const projectMemoryTools = readProjectFile("src/tools/project-memory.ts");
     const sessionTools = readProjectFile("src/tools/session.ts");
     const taskMemoryTools = readProjectFile("src/tools/task-memory.ts");
     const toolsIndex = readProjectFile("src/tools/index.ts");
 
     expect(server).toContain("Local Memory MCP is the agent core");
     expect(server).toContain("Before any task, call get_active_context");
+    expect(server).toContain("prepare_context(auto)");
+    expect(server).toContain("commit_task");
+    expect(server).toContain("correct_memory");
     expect(server).toContain("Task Working Memory workbench");
     expect(server).toContain("open_task_memory");
     expect(server).toContain("one TTL task artifact");
@@ -130,6 +142,11 @@ describe("repository graph contract", () => {
     expect(rememberTools).toContain("requirements traceability matrices");
     expect(manageTools).toContain("Prefer this over writing a competing truth beside the old one");
     expect(manageTools).toContain("Do not link just because memories share a tag");
+    expect(projectMemoryTools).toContain("registerProjectMemoryTools");
+    expect(projectMemoryTools).toContain("prepare_context");
+    expect(projectMemoryTools).toContain("commit_task");
+    expect(projectMemoryTools).toContain("correct_memory");
+    expect(projectMemoryTools).toContain("optional librarian fallback");
     expect(sessionTools).toContain("requirements coverage, decisions, red-team findings");
     expect(sessionTools).toContain("open_task_memory/update_task_memory/close_task_memory");
     expect(taskMemoryTools).toContain("registerTaskMemoryTools");
@@ -146,6 +163,7 @@ describe("repository graph contract", () => {
     expect(taskMemoryTools).not.toContain("service.digestSession");
     expect(taskMemoryTools).not.toContain("Task slug:");
     expect(toolsIndex).toContain("registerTaskMemoryTools");
+    expect(toolsIndex).toContain("registerProjectMemoryTools");
   });
 
   test("install prompt requires Codex local-memory server", () => {
@@ -165,8 +183,9 @@ describe("repository graph contract", () => {
     expect(manageTools).toContain("repository.id");
   });
 
-  test("SQLite schema keeps repository graph, FTS, and vector tables", () => {
+  test("SQLite schema keeps repository graph, FTS, vector tables, and card migration", () => {
     const schema = readProjectFile("src/db/migrations/001_schema.sql");
+    const cardMigration = readProjectFile("src/db/migrations/003_project_memory_cards.sql");
 
     expect(schema).toContain("CREATE TABLE IF NOT EXISTS repositories");
     expect(schema).toContain("CREATE TABLE IF NOT EXISTS memories");
@@ -175,6 +194,15 @@ describe("repository graph contract", () => {
     expect(schema).toContain("CREATE VIRTUAL TABLE IF NOT EXISTS memory_vectors USING vec0");
     expect(schema).toContain("FOREIGN KEY (source_memory_id, repository_id)");
     expect(schema).toContain("FOREIGN KEY (entity_id, repository_id)");
+    expect(cardMigration).toContain("ADD COLUMN card_type");
+    expect(cardMigration).toContain("ADD COLUMN status");
+    expect(cardMigration).toContain("ADD COLUMN source_type");
+    expect(cardMigration).toContain("ADD COLUMN confidence");
+    expect(cardMigration).toContain("ADD COLUMN anchors_json");
+    expect(cardMigration).toContain("ADD COLUMN metadata_json");
+    expect(cardMigration).toContain("ADD COLUMN supersedes_id");
+    expect(cardMigration).toContain("idx_memories_repository_status");
+    expect(cardMigration).toContain("idx_memories_repository_card_type");
   });
 
   test("repo-scoped semantic search uses the local vector table", () => {
@@ -186,7 +214,7 @@ describe("repository graph contract", () => {
     expect(repo).toContain("JOIN ranked ON ranked.memory_pk = m.pk");
   });
 
-  test("stats and admin search keep indexed performance paths", () => {
+  test("stats and project search keep indexed performance paths", () => {
     const repo = readProjectFile("src/repositories/memory.repository.ts");
     const migration = readProjectFile("src/db/migrations/002_access_count_indexes.sql");
 
@@ -194,6 +222,8 @@ describe("repository graph contract", () => {
     expect(repo).toContain("ORDER BY m.access_count DESC, m.last_accessed_at DESC, m.updated_at DESC");
     expect(repo).toContain("FROM memories_fts");
     expect(repo).toContain("memories_fts MATCH ?");
+    expect(repo).toContain("searchByTagsEntitiesAndText");
+    expect(repo).toContain("listByCardTypes");
     expect(repo).not.toContain("m.content LIKE ? OR m.summary LIKE ?");
     expect(migration).toContain("idx_memories_access_count_active");
     expect(migration).toContain("idx_memories_repository_access_count_active");
@@ -218,6 +248,8 @@ describe("repository graph contract", () => {
     expect(schema).toContain("root_path TEXT NOT NULL");
     expect(schema).toContain("root_hash TEXT NOT NULL UNIQUE");
     expect(schema).toContain("json_extract(metadata, '$.identity_kind')");
-    expect(migrate).toContain("for (const file of files)");
+    expect(migrate).toContain("backupDatabaseBeforeMigrations");
+    expect(migrate).toContain("VACUUM INTO");
+    expect(migrate).toContain("for (const file of pendingFiles)");
   });
 });

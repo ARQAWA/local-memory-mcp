@@ -2,7 +2,16 @@ import { randomUUID } from "node:crypto";
 import { getDb, type LocalDatabase } from "../db/connection.js";
 import { DatabaseError, dbQuery } from "../errors.js";
 import type { RepositoryIdentity } from "../services/git-identity.service.js";
-import type { Memory, MemoryStats, MemoryType, RecallResult, RepositoryRecord } from "../types/memory.js";
+import type {
+  CardType,
+  Memory,
+  MemoryStats,
+  MemorySourceType,
+  MemoryStatus,
+  MemoryType,
+  RecallResult,
+  RepositoryRecord,
+} from "../types/memory.js";
 
 export type SqlProvider = () => LocalDatabase;
 
@@ -13,12 +22,19 @@ interface CreateMemoryRow {
   repository_id: string;
   user_id: string | null;
   memory_type: MemoryType;
+  card_type?: CardType | undefined;
+  status?: MemoryStatus | undefined;
+  source_type?: MemorySourceType | undefined;
+  confidence?: number | undefined;
+  anchors_json?: string | undefined;
+  metadata_json?: string | undefined;
   content: string;
   summary: string;
   importance: number;
   created_by: string;
   source: string | null;
   supersedes: string | null;
+  supersedes_id?: string | null | undefined;
   external_id?: string | null | undefined;
   embedding?: number[] | null;
   valid_from?: Date | undefined;
@@ -35,6 +51,8 @@ export interface MemoryListFilters {
   repository_id?: string | undefined;
   user_id?: string | undefined;
   memory_type?: MemoryType | undefined;
+  card_type?: CardType | undefined;
+  statuses?: MemoryStatus[] | undefined;
   tags?: string[] | undefined;
   since?: string | undefined;
   limit: number;
@@ -44,6 +62,8 @@ export interface MemoryListFilters {
 interface SearchFilters {
   repository_id?: string | undefined;
   memory_type?: MemoryType | undefined;
+  card_type?: CardType | undefined;
+  statuses?: MemoryStatus[] | undefined;
   tags?: string[] | undefined;
 }
 
@@ -112,7 +132,7 @@ function placeholders(values: readonly unknown[]): string {
 }
 
 function activeClause(alias = "m"): string {
-  return `${alias}.deleted_at IS NULL AND ${alias}.valid_until IS NULL AND (${alias}.expires_at IS NULL OR ${alias}.expires_at > ?)`;
+  return `${alias}.deleted_at IS NULL AND ${alias}.valid_until IS NULL AND (${alias}.expires_at IS NULL OR ${alias}.expires_at > ?) AND ${alias}.status <> 'wrong'`;
 }
 
 function ftsQuery(input: string): string | null {
@@ -125,13 +145,22 @@ function ftsQuery(input: string): string | null {
   return terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(" OR ");
 }
 
+function queryTerms(input: string): string[] {
+  return input
+    .split(/[^\p{L}\p{N}_./:-]+/u)
+    .map((term) => term.trim())
+    .filter((term) => term.length >= 2)
+    .slice(0, 12);
+}
+
 function memorySelect(extra = ""): string {
   return `
     SELECT
       ${extra}
       m.pk, m.id, m.repository_id, r.slug AS repository_slug, r.name AS repository_name,
-      m.user_id, m.memory_type, m.content, m.summary, m.importance,
-      m.created_by, m.source, m.supersedes, m.external_id,
+      m.user_id, m.memory_type, m.card_type, m.status, m.source_type, m.confidence,
+      m.anchors_json, m.metadata_json, m.content, m.summary, m.importance,
+      m.created_by, m.source, m.supersedes, m.supersedes_id, m.external_id,
       m.valid_from, m.valid_until, m.created_at, m.updated_at, m.expires_at,
       m.access_count, m.last_accessed_at, m.deleted_at,
       m.group_id, m.sequence, m.group_type,
@@ -171,6 +200,15 @@ function toMemory(row: MemoryRow): Memory {
 
 function vectorText(embedding: number[]): string {
   return `[${embedding.join(",")}]`;
+}
+
+function cardTypeForMemoryType(memoryType: MemoryType): CardType {
+  if (memoryType === "decision") return "decision";
+  if (memoryType === "procedure") return "process";
+  if (memoryType === "convention") return "constraint";
+  if (memoryType === "episode") return "gotcha";
+  if (memoryType === "reference") return "reference";
+  return "fact";
 }
 
 export class MemoryRepository {
@@ -267,21 +305,29 @@ export class MemoryRepository {
       const timestamp = nowIso();
       db.run(
         `INSERT INTO memories (
-          id, repository_id, user_id, memory_type, content, summary, importance, created_by, source, supersedes,
+          id, repository_id, user_id, memory_type, card_type, status, source_type, confidence,
+          anchors_json, metadata_json, content, summary, importance, created_by, source, supersedes, supersedes_id,
           external_id, valid_from, valid_until, last_accessed_at, created_at, updated_at, expires_at,
           group_id, sequence, group_type
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
           data.repository_id,
           data.user_id,
           data.memory_type,
+          data.card_type ?? cardTypeForMemoryType(data.memory_type),
+          data.status ?? "current",
+          data.source_type ?? "agent",
+          data.confidence ?? 0.85,
+          data.anchors_json ?? "[]",
+          data.metadata_json ?? "{}",
           data.content,
           data.summary,
           data.importance,
           data.created_by,
           data.source,
           data.supersedes,
+          data.supersedes_id ?? data.supersedes,
           data.external_id ?? null,
           iso(data.valid_from) ?? timestamp,
           iso(data.valid_until),
@@ -308,9 +354,16 @@ export class MemoryRepository {
       summary?: string | undefined;
       importance?: number | undefined;
       memory_type?: MemoryType | undefined;
+      card_type?: CardType | undefined;
+      status?: MemoryStatus | undefined;
+      source_type?: MemorySourceType | undefined;
+      confidence?: number | undefined;
+      anchors_json?: string | undefined;
+      metadata_json?: string | undefined;
       valid_until?: Date | null | undefined;
       embedding?: number[] | null | undefined;
       supersedes?: string | null | undefined;
+      supersedes_id?: string | null | undefined;
     },
     repositoryId?: string,
   ): Promise<Memory | null> {
@@ -327,8 +380,15 @@ export class MemoryRepository {
            summary = COALESCE(?, summary),
            importance = COALESCE(?, importance),
            memory_type = COALESCE(?, memory_type),
+           card_type = COALESCE(?, card_type),
+           status = COALESCE(?, status),
+           source_type = COALESCE(?, source_type),
+           confidence = COALESCE(?, confidence),
+           anchors_json = COALESCE(?, anchors_json),
+           metadata_json = COALESCE(?, metadata_json),
            valid_until = CASE WHEN ? = 1 THEN ? ELSE valid_until END,
            supersedes = CASE WHEN ? = 1 THEN ? ELSE supersedes END,
+           supersedes_id = CASE WHEN ? = 1 THEN ? ELSE supersedes_id END,
            updated_at = ?
          WHERE id = ? AND deleted_at IS NULL ${repositoryId ? "AND repository_id = ?" : ""}`,
         [
@@ -336,10 +396,18 @@ export class MemoryRepository {
           data.summary ?? null,
           data.importance ?? null,
           data.memory_type ?? null,
+          data.card_type ?? null,
+          data.status ?? null,
+          data.source_type ?? null,
+          data.confidence ?? null,
+          data.anchors_json ?? null,
+          data.metadata_json ?? null,
           data.valid_until !== undefined ? 1 : 0,
           iso(data.valid_until),
           data.supersedes !== undefined ? 1 : 0,
           data.supersedes ?? null,
+          data.supersedes_id !== undefined ? 1 : 0,
+          data.supersedes_id ?? null,
           nowIso(),
           id,
           ...(repositoryId ? [repositoryId] : []),
@@ -628,6 +696,92 @@ export class MemoryRepository {
     return this.getSql().all<MemoryRow>(sql, params).map(toMemory);
   }
 
+  async findByIds(ids: string[], repositoryId?: string): Promise<Memory[]> {
+    if (ids.length === 0) return [];
+    const params: SqlParam[] = [...ids];
+    let sql = `${memorySelect()} WHERE m.deleted_at IS NULL AND m.status <> 'wrong' AND m.id IN (${placeholders(ids)})`;
+    if (repositoryId) {
+      sql += " AND m.repository_id = ?";
+      params.push(repositoryId);
+    }
+    return this.getSql().all<MemoryRow>(sql, params).map(toMemory);
+  }
+
+  async searchByTagsEntitiesAndText(query: string, filters: SearchFilters, limit: number): Promise<RecallResult[]> {
+    return dbQuery("MemoryRepository.searchByTagsEntitiesAndText", async () => {
+      const terms = queryTerms(query);
+      if (terms.length === 0) return [];
+      const like = terms.map((term) => `%${term.replaceAll("%", " ").replaceAll("_", " ")}%`);
+      const { where, params } = this.searchWhere(filters, "ranked");
+      const rows = this.getSql().all<SearchRow>(
+        `WITH ranked AS (
+           SELECT m.pk AS pk,
+             COUNT(DISTINCT mt.tag) * 1.0 + COUNT(DISTINCT e.id) * 1.25 AS score
+           FROM memories m
+           LEFT JOIN memory_tags mt
+             ON mt.memory_id = m.id
+            AND mt.repository_id = m.repository_id
+            AND (${like.map(() => "mt.tag LIKE ?").join(" OR ")})
+           LEFT JOIN memory_entities me
+             ON me.memory_id = m.id
+            AND me.repository_id = m.repository_id
+           LEFT JOIN entities e
+             ON e.id = me.entity_id
+            AND e.repository_id = m.repository_id
+            AND (${like.map(() => "e.name LIKE ?").join(" OR ")})
+           WHERE m.deleted_at IS NULL
+           GROUP BY m.pk
+           HAVING score > 0
+         )
+         ${memorySelect("ranked.score AS score,")}
+         JOIN ranked ON ranked.pk = m.pk
+         ${where}
+         ORDER BY ranked.score DESC, m.updated_at DESC
+         LIMIT ?`,
+        [...like, ...like, ...params, limit],
+      );
+      return rows.map((row) => this.toRecallResult(row, "hybrid"));
+    });
+  }
+
+  async listByCardTypes(cardTypes: CardType[], filters: SearchFilters, limit: number): Promise<RecallResult[]> {
+    if (cardTypes.length === 0) return [];
+    const nextFilters = { ...filters, statuses: filters.statuses ?? ["current", "candidate", "needs_review"] };
+    const { where, params } = this.searchWhere(nextFilters, "m");
+    const rows = this.getSql().all<SearchRow>(
+      `${memorySelect("1.0 AS score,")}
+       ${where}
+       AND m.card_type IN (${placeholders(cardTypes)})
+       ORDER BY m.importance DESC, m.updated_at DESC
+       LIMIT ?`,
+      [...params, ...cardTypes, limit],
+    );
+    return rows.map((row) => this.toRecallResult(row, "hybrid"));
+  }
+
+  async updateCardState(
+    id: string,
+    data: {
+      status?: MemoryStatus | undefined;
+      confidence?: number | undefined;
+      source_type?: MemorySourceType | undefined;
+      supersedes_id?: string | null | undefined;
+    },
+    repositoryId?: string,
+  ): Promise<Memory | null> {
+    return this.update(
+      id,
+      {
+        status: data.status,
+        confidence: data.confidence,
+        source_type: data.source_type,
+        supersedes_id: data.supersedes_id,
+        supersedes: data.supersedes_id,
+      },
+      repositoryId,
+    );
+  }
+
   private listMostAccessed(repositoryId?: string): Memory[] {
     const params: SqlParam[] = [nowIso()];
     const conditions = [activeClause("m")];
@@ -723,128 +877,6 @@ export class MemoryRepository {
     );
   }
 
-  adminAnalytics(days: number): {
-    total_memories: number;
-    created_last_period: number;
-    days: number;
-    by_type: Record<string, number>;
-    by_repository: Record<string, number>;
-    by_creator: { creator: string; repository: string; count: number }[];
-    total_tags: number;
-    stale_memories: number;
-    avg_importance: number;
-  } {
-    const db = this.getSql();
-    const sinceDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-    const staleDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-    const totalRow = db.get<{ count: number }>(
-      "SELECT COUNT(*) AS count FROM memories WHERE deleted_at IS NULL AND valid_until IS NULL",
-    );
-    const typeRows = db.all<{ memory_type: string; count: number }>(
-      `SELECT memory_type, COUNT(*) AS count
-       FROM memories
-       WHERE deleted_at IS NULL AND valid_until IS NULL
-       GROUP BY memory_type ORDER BY count DESC`,
-    );
-    const repositoryRows = db.all<{ slug: string; count: number }>(
-      `SELECT r.slug, COUNT(m.id) AS count
-       FROM repositories r
-       LEFT JOIN memories m ON m.repository_id = r.id AND m.deleted_at IS NULL AND m.valid_until IS NULL
-       GROUP BY r.slug ORDER BY count DESC`,
-    );
-    const creatorRows = db.all<{ creator: string; repository: string; count: number }>(
-      `SELECT m.created_by AS creator, r.slug AS repository, COUNT(*) AS count
-       FROM memories m
-       JOIN repositories r ON r.id = m.repository_id
-       WHERE m.deleted_at IS NULL AND m.valid_until IS NULL
-       GROUP BY m.created_by, r.slug ORDER BY count DESC LIMIT 20`,
-    );
-    const tagRow = db.get<{ count: number }>("SELECT COUNT(DISTINCT tag) AS count FROM memory_tags");
-    const staleRow = db.get<{ count: number }>(
-      "SELECT COUNT(*) AS count FROM memories WHERE deleted_at IS NULL AND valid_until IS NULL AND updated_at < ?",
-      [staleDate],
-    );
-    const importanceRow = db.get<{ avg: number }>(
-      "SELECT COALESCE(AVG(importance), 0) AS avg FROM memories WHERE deleted_at IS NULL AND valid_until IS NULL",
-    );
-    const recentRow = db.get<{ count: number }>(
-      "SELECT COUNT(*) AS count FROM memories WHERE deleted_at IS NULL AND valid_until IS NULL AND created_at >= ?",
-      [sinceDate],
-    );
-    return {
-      total_memories: totalRow?.count ?? 0,
-      created_last_period: recentRow?.count ?? 0,
-      days,
-      by_type: Object.fromEntries(typeRows.map((row) => [row.memory_type, row.count])),
-      by_repository: Object.fromEntries(repositoryRows.map((row) => [row.slug, row.count])),
-      by_creator: creatorRows,
-      total_tags: tagRow?.count ?? 0,
-      stale_memories: staleRow?.count ?? 0,
-      avg_importance: importanceRow?.avg ?? 0,
-    };
-  }
-
-  adminListMemories(filters: {
-    limit: number;
-    offset: number;
-    search?: string;
-    memoryType?: string;
-    repository?: string;
-  }): { total: number; memories: unknown[]; limit: number; offset: number } {
-    const params: SqlParam[] = [];
-    const match = filters.search?.trim() ? ftsQuery(filters.search) : null;
-    if (filters.search?.trim() && !match) {
-      return { total: 0, memories: [], limit: filters.limit, offset: filters.offset };
-    }
-    const conditions = ["m.deleted_at IS NULL", "m.valid_until IS NULL"];
-    if (match) {
-      conditions.push("memories_fts MATCH ?");
-      params.push(match);
-    }
-    if (filters.memoryType) {
-      conditions.push("m.memory_type = ?");
-      params.push(filters.memoryType);
-    }
-    if (filters.repository) {
-      conditions.push("r.slug = ?");
-      params.push(filters.repository);
-    }
-    const where = `WHERE ${conditions.join(" AND ")}`;
-    const from = match
-      ? `FROM memories_fts
-         JOIN memories m ON m.pk = memories_fts.rowid
-         JOIN repositories r ON r.id = m.repository_id`
-      : `FROM memories m
-         JOIN repositories r ON r.id = m.repository_id`;
-    const orderBy = match ? "ORDER BY bm25(memories_fts), m.updated_at DESC" : "ORDER BY m.updated_at DESC";
-    const countRow = this.getSql().get<{ count: number }>(
-      `SELECT COUNT(*) AS count
-       ${from}
-       ${where}`,
-      params,
-    );
-    const memories = this.getSql().all(
-      `SELECT m.id, m.summary, m.memory_type, r.slug AS repository,
-              m.user_id, m.created_by, m.importance, m.access_count,
-              m.created_at, m.updated_at
-       ${from}
-       ${where}
-       ${orderBy}
-       LIMIT ? OFFSET ?`,
-      [...params, filters.limit, filters.offset],
-    );
-    return { total: countRow?.count ?? 0, memories, limit: filters.limit, offset: filters.offset };
-  }
-
-  adminMemoryDetail(id: string): (Memory & { has_embedding: boolean }) | null {
-    const row = this.getSql().get<MemoryRow & { has_embedding: number }>(
-      `${memorySelect("EXISTS(SELECT 1 FROM memory_vectors mv WHERE mv.memory_pk = m.pk) AS has_embedding,")}
-       WHERE m.id = ?`,
-      [id],
-    );
-    return row ? { ...toMemory(row), has_embedding: Boolean(row.has_embedding) } : null;
-  }
-
   private listWhere(filters: MemoryListFilters): { where: string; params: SqlParam[] } {
     const params: SqlParam[] = [nowIso()];
     const conditions = [activeClause("m")];
@@ -859,6 +891,14 @@ export class MemoryRepository {
     if (filters.memory_type) {
       conditions.push("m.memory_type = ?");
       params.push(filters.memory_type);
+    }
+    if (filters.card_type) {
+      conditions.push("m.card_type = ?");
+      params.push(filters.card_type);
+    }
+    if (filters.statuses?.length) {
+      conditions.push(`m.status IN (${placeholders(filters.statuses)})`);
+      params.push(...filters.statuses);
     }
     if (filters.since) {
       conditions.push("m.created_at >= ?");
@@ -878,6 +918,14 @@ export class MemoryRepository {
     if (filters.memory_type) {
       conditions.push("m.memory_type = ?");
       params.push(filters.memory_type);
+    }
+    if (filters.card_type) {
+      conditions.push("m.card_type = ?");
+      params.push(filters.card_type);
+    }
+    if (filters.statuses?.length) {
+      conditions.push(`m.status IN (${placeholders(filters.statuses)})`);
+      params.push(...filters.statuses);
     }
     this.applyTagFilter(conditions, params, filters.tags);
     return { where: `WHERE ${conditions.join(" AND ")}`, params };
@@ -913,7 +961,7 @@ export class MemoryRepository {
     ]);
   }
 
-  private toRecallResult(row: SearchRow, matchType: "fts" | "semantic"): RecallResult {
+  private toRecallResult(row: SearchRow, matchType: "fts" | "semantic" | "hybrid"): RecallResult {
     const memory = toMemory(row);
     return {
       ...memory,

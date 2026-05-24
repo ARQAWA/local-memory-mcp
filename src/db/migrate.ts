@@ -1,8 +1,9 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDb, closeDb } from "./connection.js";
 import { logger } from "../services/logger.js";
+import { loadConfig } from "../config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -14,6 +15,21 @@ function applyMigration(file: string, content: string): void {
     tx.run("INSERT INTO _migrations (name) VALUES (?)", [file]);
   });
   logger.info(`Applied: ${file}`);
+}
+
+function backupDatabaseBeforeMigrations(pendingFiles: string[]): string | null {
+  if (pendingFiles.length === 0) return null;
+
+  const { databasePath } = loadConfig();
+  if (databasePath === ":memory:") return null;
+
+  const backupDir = join(dirname(databasePath), "backups");
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupPath = join(backupDir, `local-memory-before-${pendingFiles[0]}-${stamp}.sqlite3`);
+  mkdirSync(backupDir, { recursive: true });
+  getDb().run("VACUUM INTO ?", [backupPath]);
+  logger.info(`SQLite backup created before migrations: ${backupPath}`);
+  return backupPath;
 }
 
 export function runMigrations(): Promise<void> {
@@ -39,7 +55,10 @@ export function runMigrations(): Promise<void> {
 
   const applied = db.all<{ name: string }>("SELECT name FROM _migrations");
   const appliedSet = new Set(applied.map((row) => row.name));
-  for (const file of files) {
+  const pendingFiles = files.filter((file) => !appliedSet.has(file));
+  backupDatabaseBeforeMigrations(pendingFiles);
+
+  for (const file of pendingFiles) {
     if (appliedSet.has(file)) continue;
     applyMigration(file, readFileSync(join(migrationsDir, file), "utf-8"));
   }

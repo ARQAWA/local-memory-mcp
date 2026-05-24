@@ -13,7 +13,7 @@ Goal:
   rules/instructions store.
 - Make the Local Memory MCP server required when the host supports required
   MCP servers.
-- Verify SQLite, MCP tools, Web UI, Admin UI, and installed rules.
+- Verify SQLite, MCP tools, project-memory tools, and installed rules.
 
 Repository:
 https://github.com/ARQAWA/local-memory-mcp
@@ -37,62 +37,56 @@ Command:
 Database file:
 `$HOME/.local/share/local-memory-mcp/local-memory.sqlite3`
 
-Local URLs:
-- `http://127.0.0.1:13765/ui`
-- `http://127.0.0.1:13765/admin`
-
 Rules:
 - Do not create `.env`, `.env.local`, or `.env.example`.
 - Use global system environment variables only.
 - Do not clone into an application repository.
-- Do not expose the web server outside localhost.
-- Keep `LOCAL_MEMORY_HOST=127.0.0.1`.
 - Use `LOCAL_MEMORY_DB_PATH` only when the default database path must change.
 - Use `OPENROUTER_API_KEY` for embeddings.
+- Use `LOCAL_MEMORY_RERANKER=none|command` and
+  `LOCAL_MEMORY_RERANKER_CMD` only when a local reranker is explicitly needed.
+- Use `LOCAL_MEMORY_LIBRARIAN_MODE=off|auto|always`,
+  `LOCAL_MEMORY_LIBRARIAN_CMD`, and
+  `LOCAL_MEMORY_LIBRARIAN_TIMEOUT_MS=30000` only when a local librarian
+  command is explicitly needed.
 - Do not print secret values.
 
 Steps:
 1. Detect the current agent host.
-2. Stop old `local-memory-web` processes for this install path.
-3. Install or update the repo at the install path.
+2. Install or update the repo at the install path.
    - If this prompt is in an already checked-out repo, use that repo/ref as
      the source.
    - Do not assume GitHub `main` contains local uncommitted work unless the
      user explicitly says to install from GitHub.
    - Remove stale files from the install path before copying/building.
-4. Install dependencies with `pnpm install --frozen-lockfile`.
-5. Run `pnpm exec tsc --noEmit --incremental false`.
-6. Run `pnpm exec eslint src tests --max-warnings=0`.
-7. Run `pnpm test`.
-8. Build with `pnpm run build`.
-9. Run migrations with `pnpm run migrate`.
-10. Link command wrappers into `$HOME/.local/bin`.
-11. Configure a global MCP server named `local-memory`.
+3. Install dependencies with `pnpm install --frozen-lockfile`.
+4. Run `pnpm exec tsc --noEmit --incremental false`.
+5. Run `pnpm exec eslint src tests --max-warnings=0`.
+6. Run `pnpm test`.
+7. Build with `pnpm run build`.
+8. Run migrations with `pnpm run migrate`.
+9. Link command wrappers into `$HOME/.local/bin`.
+10. Configure a global MCP server named `local-memory`.
     - For Codex, set `required = true` for `mcp_servers.local-memory`.
-12. Install the managed contract below into the host global rules.
+11. Install the managed contract below into the host global rules.
     - Replace only the managed `LOCAL_MEMORY_MCP_AGENT_CONTRACT` block.
     - Preserve unrelated rules and other managed blocks, including ARQAWA
       blocks.
-13. Start/restart `local-memory-web`.
-14. Verify Web UI and Admin UI.
-15. Start a fresh agent/MCP session and verify tool schemas.
+12. Start a fresh agent/MCP session and verify tool schemas.
 
 Install checks:
 - `dist` must be freshly built after `rm -rf dist`.
 - The database file must exist after migrations.
-- `/api/repositories` must exist.
-- `/api/stats?repository_mode=all` must work.
 - Existing repository rows must have non-null `root_path`, SHA-256 `root_hash`,
   and object metadata with `identity_kind`.
-- `/ui/` must show repository controls.
-- `/ui/` may default to `All repositories`; this is the intended global
-  viewer mode.
-- `/ui/` must keep the viewer tabs: `Dashboard`, `Memories`, `Search`,
-  `Graph`.
-- `/admin` must keep `Dashboard`, `All Memories`, period selection,
-  repository chart, pagination, and memory detail modal.
-- Active UI and `dist` must expose repository identity only.
+- The database must have `card_type`, `status`, `source_type`, `confidence`,
+  `anchors_json`, `metadata_json`, and `supersedes_id` on `memories`.
+- Migration must create a SQLite backup before pending migrations.
+- There must be no browser UI, admin UI, or web route surface in the active
+  build.
 - MCP schemas must expose only repository-first selector fields.
+- MCP schemas must expose project-memory tools:
+  `prepare_context`, `commit_task`, `correct_memory`.
 - MCP schemas must expose Task Working Memory tools:
   `open_task_memory`, `update_task_memory`, `get_task_memory`,
   `close_task_memory`.
@@ -116,7 +110,9 @@ or unavailable memory tools as permission to continue without memory.
 Before any task, call `get_active_context`.
 
 Before analysis, planning, editing, review, or repository-grounded answering, call
-`recall` or `get_context_for` with the current topic.
+`prepare_context(auto)` with the current task. Use `prepare_context(light)` for
+micro-details. Use `recall` or `get_context_for` only when direct legacy memory
+records are needed.
 
 Without Local Memory MCP, stop and report the blocker. Do not continue without
 memory and do not invent memory results. The only exception is work whose direct
@@ -140,13 +136,25 @@ selection. Do not use identity aliases.
 Memory workflow:
 
 - Start every task with `get_active_context`.
-- Use `recall` or `get_context_for` before deciding, planning, editing, or
-  answering from repository knowledge.
+- Use `prepare_context(auto)` before non-trivial work.
+- Use `prepare_context(light)` for micro-details and narrow follow-up facts.
+- `prepare_context(auto)` must use deep retrieval for auth, security, billing,
+  migration, architecture, debugging, and refactoring tasks.
+- Use `recall` or `get_context_for` only when you need direct memory records or
+  compatibility with older workflows.
 - During analysis, write durable findings as soon as they become useful for
   future work.
 - Before writing a new memory, search existing memory to avoid duplicates.
-- Prefer short, atomic memories: `fact`, `decision`, `procedure`, `episode`,
-  `reference`, or `convention`.
+- At the end of a task, use `commit_task` for durable decisions, constraints,
+  processes, gotchas, and roadmap items. Empty fields are not written.
+- Prefer short, atomic project memory cards. Keep legacy `memory_type`
+  compatible, but use card types: `decision`, `process`, `constraint`,
+  `architecture`, `legacy`, `gotcha`, `roadmap`, `preference`, `task_state`,
+  `reference`, or `fact`.
+- Never write secrets, tokens, passwords, private keys, credentials, or private
+  auth material.
+- Do not store agent guesses as `current` truth. Use `candidate` or
+  `needs_review`, or do not store the card.
 - For broad audits, refactors, migrations, removals, agent-instruction changes,
   or architecture research, maintain a coverage map in memory: goal, acceptance
   criteria, aliases, searched commands, checked files or zones, positive
@@ -161,7 +169,8 @@ For any task that needs discovery, planning, edits, tests, review, or more than
 one meaningful step, the agent must keep a short-lived task workbench.
 
 1. Start with `get_active_context`.
-2. Call `recall` or `get_context_for` for the task topic.
+2. Call `prepare_context(auto)` for the task topic, or
+   `prepare_context(light)` for a micro-detail.
 3. Open the workbench with `open_task_memory`.
    This creates only short-lived scratch. If the same slug is already open, it
    returns the existing scratch instead of overwriting it.
@@ -223,8 +232,18 @@ writes for that task.
 When the user says "remember", "запомни", "save this", or "зафиксируй", write
 memory immediately with `remember_fact`, `remember_decision`, or `remember`.
 
-When a fact is stale or wrong, use `correct`. When memory is irrelevant, use
-`forget`. When many stale memories create noise, use `batch_forget`.
+When a memory card is stale, wrong, deprecated, superseded, or uncertain, use
+`correct_memory` to change its status. Use `correct` only when corrected text
+must supersede old text. When memory is irrelevant, use `forget`. When many
+stale memories create noise, use `batch_forget`.
+
+Memory card status rules:
+
+- `status` is more important than score.
+- `wrong` must not be shown in prepared context.
+- `deprecated` and `superseded` must appear only in the `Legacy` section.
+- `current` can be used for verified durable truth.
+- `candidate` and `needs_review` are for useful but uncertain findings.
 
 Graph and relation rules:
 
@@ -249,14 +268,15 @@ Graph and relation rules:
 
 Use `list_repositories` only when cross-repository discovery is needed.
 
-Useful read tools: `get_active_context`, `recall`, `get_context_for`,
+Useful read tools: `get_active_context`, `prepare_context`, `recall`,
+`get_context_for`,
 `get_memory`, `get_related`, `get_group`, `list_memories`,
 `search_memories`, `query_entities`, `detect_conflicts`,
 `get_memory_stats`, `get_repository_overview`, `list_repositories`, and
 `get_task_memory`.
 
 Useful write tools: `remember`, `remember_fact`, `remember_decision`,
-`correct`, `forget`, `batch_forget`, `link_memories`,
+`commit_task`, `correct_memory`, `correct`, `forget`, `batch_forget`, `link_memories`,
 `set_session_context`, `open_task_memory`, `update_task_memory`,
 `close_task_memory`, and `digest_session`.
 

@@ -1,19 +1,16 @@
 {
   "name": "local-memory-mcp",
   "version": "0.1.0",
-  "description": "Local-only MCP memory server with SQLite, vector search, Web UI, and Admin UI",
+  "description": "Local-only MCP memory server with SQLite, vector search, and project memory cards",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "local-memory-mcp": "dist/index.js",
-    "local-memory-web": "bin/local-memory-web.sh"
+    "local-memory-mcp": "dist/index.js"
   },
   "scripts": {
-    "build": "rm -rf dist tsconfig.tsbuildinfo && tsc --incremental false && mkdir -p dist/db && cp -r src/db/migrations dist/db/migrations && cp -r public dist/public",
+    "build": "rm -rf dist tsconfig.tsbuildinfo && tsc --incremental false && mkdir -p dist/db && cp -r src/db/migrations dist/db/migrations",
     "dev:mcp": "tsx src/index.ts --stdio",
-    "dev:web": "tsx src/index.ts --web",
     "start": "node dist/index.js --stdio",
-    "web": "node dist/index.js --web",
     "migrate": "tsx src/db/migrate.ts",
     "proof:search": "tsx scripts/search-performance-proof.ts",
     "typecheck": "tsc --noEmit",
@@ -23,15 +20,12 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "express": "^5.2.1",
-    "helmet": "^8.1.0",
     "lru-cache": "^11.3.6",
     "sqlite-vec": "^0.1.9",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.3",
-    "@types/express": "^5.0.6",
     "@types/node": "^22.13.4",
     "eslint": "^9.0.0",
     "prettier": "^3.8.1",

@@ -2,6 +2,30 @@ import { z } from "zod";
 import type { MemoryId, RepositoryId, UserId } from "./branded.js";
 
 export const memoryTypes = ["fact", "decision", "procedure", "episode", "reference", "convention"] as const;
+export const cardTypes = [
+  "decision",
+  "process",
+  "constraint",
+  "architecture",
+  "legacy",
+  "gotcha",
+  "roadmap",
+  "preference",
+  "task_state",
+  "reference",
+  "fact",
+] as const;
+export const memoryStatuses = [
+  "current",
+  "candidate",
+  "temporary",
+  "deprecated",
+  "superseded",
+  "historical",
+  "wrong",
+  "needs_review",
+] as const;
+export const memorySourceTypes = ["agent", "user", "legacy_import", "import", "migration", "tool", "system"] as const;
 
 export const relationTypes = [
   "supersedes",
@@ -18,12 +42,18 @@ export const graphModes = ["off", "hard", "auto", "full"] as const;
 export const relatedModes = ["active", "lineage", "all"] as const;
 
 export const MemoryTypeSchema = z.enum(memoryTypes);
+export const CardTypeSchema = z.enum(cardTypes);
+export const MemoryStatusSchema = z.enum(memoryStatuses);
+export const MemorySourceTypeSchema = z.enum(memorySourceTypes);
 export const RelationTypeSchema = z.enum(relationTypes);
 export const RepositoryReadModeSchema = z.enum(repositoryReadModes);
 export const GraphModeSchema = z.enum(graphModes);
 export const RelatedModeSchema = z.enum(relatedModes);
 
 export type MemoryType = z.infer<typeof MemoryTypeSchema>;
+export type CardType = z.infer<typeof CardTypeSchema>;
+export type MemoryStatus = z.infer<typeof MemoryStatusSchema>;
+export type MemorySourceType = z.infer<typeof MemorySourceTypeSchema>;
 export type RelationType = z.infer<typeof RelationTypeSchema>;
 export type RepositoryReadMode = z.infer<typeof RepositoryReadModeSchema>;
 export type GraphMode = z.infer<typeof GraphModeSchema>;
@@ -66,6 +96,12 @@ export interface Memory {
   summary: string;
   embedding?: number[] | null;
   memory_type: MemoryType;
+  card_type: CardType;
+  status: MemoryStatus;
+  source_type: MemorySourceType;
+  confidence: number;
+  anchors_json: string;
+  metadata_json: string;
   tags: string[];
   user_id: UserId | null;
   valid_from: Date;
@@ -80,6 +116,7 @@ export interface Memory {
   source: string | null;
   external_id: string | null;
   supersedes: MemoryId | null;
+  supersedes_id: MemoryId | null;
   group_id: string | null;
   sequence: number | null;
   group_type: string | null;
@@ -137,6 +174,13 @@ export const RememberSchema = z
   .object({
     content: contentSchema.describe("The knowledge to remember (markdown)"),
     memory_type: MemoryTypeSchema.describe("Type: fact, decision, procedure, episode, reference, or convention"),
+    card_type: CardTypeSchema.optional().describe("Project memory card type"),
+    status: MemoryStatusSchema.optional().describe("Project memory card status"),
+    source_type: MemorySourceTypeSchema.optional().describe("Source class for the memory card"),
+    confidence: z.number().min(0).max(1).optional().describe("Confidence for the memory card"),
+    anchors_json: z.string().optional().describe("JSON anchors for file, API, or doc references"),
+    metadata_json: z.string().optional().describe("JSON metadata for the memory card"),
+    supersedes_id: z.uuid().optional().describe("Memory card id superseded by this memory"),
     tags: tagsArraySchema.describe("Classification tags"),
     importance: z.number().min(0).max(1).optional().describe("Importance score (0-1), auto-calculated if omitted"),
     external_id: z

@@ -18,15 +18,14 @@ export default tseslint.config(
       "@typescript-eslint/no-empty-object-type": ["warn", { allowInterfaces: "with-single-extends" }],
       "@typescript-eslint/restrict-template-expressions": ["error", { allowNumber: true }],
       "@typescript-eslint/no-unnecessary-condition": "warn",
-      // Express route handlers are async but Express expects sync — void wrapping is noise
+      // MCP handlers often receive void-return callback types.
       "@typescript-eslint/no-misused-promises": ["error", { checksVoidReturn: { arguments: false } }],
       // MCP SDK .tool() / .prompt() are deprecated but no alternative yet in SDK version we use
       "@typescript-eslint/no-deprecated": "warn",
-      // Async without await is common in Express middleware and callback-based APIs
+      // Async without await is common in repository contracts and callback-based APIs
       "@typescript-eslint/require-await": "warn",
       // Empty functions are common as no-op callbacks
       "@typescript-eslint/no-empty-function": "off",
-      // Allow confusing void expressions for express one-liners
       "@typescript-eslint/no-confusing-void-expression": ["error", { ignoreArrowShorthand: true }],
     },
   },
@@ -45,7 +44,7 @@ export default tseslint.config(
   },
   {
     // SQLite calls are sync, but repositories keep async public contracts.
-    files: ["src/repositories/**/*.ts", "src/api/admin-routes.ts"],
+    files: ["src/repositories/**/*.ts"],
     rules: {
       "@typescript-eslint/require-await": "off",
     },

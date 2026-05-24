@@ -6,8 +6,6 @@ export const DEFAULT_DATABASE_PATH = join(homedir(), ".local", "share", "local-m
 
 export const configSchema = z
   .object({
-    port: z.coerce.number().int().min(1).max(65535).default(13765),
-    host: z.string().default("127.0.0.1"),
     nodeEnv: z.enum(["development", "production", "test"]).default("development"),
 
     databasePath: z.string().min(1).default(DEFAULT_DATABASE_PATH),
@@ -19,8 +17,6 @@ export const configSchema = z
     openRouterApiKey: z.string().optional(),
     openRouterBaseUrl: z.url().default("https://openrouter.ai/api/v1"),
     asyncEmbedding: z.coerce.boolean().default(false),
-
-    rateLimitPerMin: z.coerce.number().int().min(1).max(100_000).default(500),
   })
   .strict();
 
@@ -32,8 +28,6 @@ export function loadConfig(): Config {
   if (cached) return cached;
   const env = process.env;
   cached = configSchema.parse({
-    port: env["LOCAL_MEMORY_PORT"] ?? env["PORT"],
-    host: env["LOCAL_MEMORY_HOST"] ?? env["HOST"],
     nodeEnv: env["NODE_ENV"],
     databasePath: env["LOCAL_MEMORY_DB_PATH"],
     sqliteExtensionPath: env["LOCAL_MEMORY_SQLITE_EXTENSION_PATH"],
@@ -43,7 +37,6 @@ export function loadConfig(): Config {
     openRouterApiKey: env["OPENROUTER_API_KEY"],
     openRouterBaseUrl: env["OPENROUTER_BASE_URL"],
     asyncEmbedding: env["ASYNC_EMBEDDING"],
-    rateLimitPerMin: env["RATE_LIMIT_PER_MIN"],
   });
   return cached;
 }

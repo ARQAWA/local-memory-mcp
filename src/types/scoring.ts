@@ -1,4 +1,4 @@
-import type { MemoryType, RelationType } from "./memory.js";
+import type { CardType, MemorySourceType, MemoryStatus, MemoryType, RelationType } from "./memory.js";
 
 export interface ScoringWeights {
   rrfK: number;
@@ -22,6 +22,9 @@ export interface ScoredMemory {
   summary: string;
   content: string;
   memory_type: MemoryType;
+  card_type: CardType;
+  status: MemoryStatus;
+  source_type: MemorySourceType;
   tags: string[];
   importance: number;
   access_count: number;

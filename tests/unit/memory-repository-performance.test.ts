@@ -71,27 +71,20 @@ describe("memory repository performance paths", () => {
     expect(stats.most_accessed.map((memory) => memory.id)).toEqual([high.id, low.id]);
   });
 
-  test("adminListMemories searches through FTS and keeps filters", async () => {
+  test("searchFts searches through FTS and keeps repository/type filters", async () => {
     const repo = new MemoryRepository();
-    const firstRepo = await ensureRepo(repo, "admin-first");
-    const secondRepo = await ensureRepo(repo, "admin-second");
+    const firstRepo = await ensureRepo(repo, "search-first");
+    const secondRepo = await ensureRepo(repo, "search-second");
     const expected = await createMemory(repo, firstRepo.id, "alpha needle phrase", "decision");
     await createMemory(repo, firstRepo.id, "alpha other phrase", "fact");
     await createMemory(repo, secondRepo.id, "alpha needle phrase", "decision");
 
-    const result = repo.adminListMemories({
-      search: "needle",
-      memoryType: "decision",
-      repository: firstRepo.slug,
-      limit: 10,
-      offset: 0,
-    });
+    const result = await repo.searchFts("needle", { repository_id: firstRepo.id, memory_type: "decision" }, 10);
 
-    expect(result.total).toBe(1);
-    expect(result.memories).toEqual([
+    expect(result).toEqual([
       expect.objectContaining({
         id: expected.id,
-        repository: firstRepo.slug,
+        repository_slug: firstRepo.slug,
         memory_type: "decision",
       }),
     ]);

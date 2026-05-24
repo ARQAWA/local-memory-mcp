@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
 import { withTransaction } from "../db/connection.js";
 import { ValidationError } from "../errors.js";
 import { getRequestContextOrDefault, getSamplingService } from "../context.js";
@@ -8,12 +10,15 @@ import { MemoryRepository } from "../repositories/memory.repository.js";
 import { RelationRepository } from "../repositories/relation.repository.js";
 import type {
   CorrectInput,
+  CardType,
   ForgetInput,
   GraphMode,
   GetContextForInput,
   ListMemoriesInput,
   Memory,
   MemoryStats,
+  MemorySourceType,
+  MemoryStatus,
   MemoryType,
   RelatedMode,
   RecallInput,
@@ -42,6 +47,60 @@ export interface MemoryServiceDeps {
   dedup?: DedupService;
   embeddingQueue?: EmbeddingQueue | undefined;
   asyncEmbedding?: boolean | undefined;
+}
+
+type PrepareMode = "auto" | "light" | "deep";
+type LibrarianUse = "auto" | "never" | "always";
+type CorrectMemoryAction = "mark_wrong" | "mark_deprecated" | "mark_superseded" | "mark_needs_review" | "mark_current";
+
+interface PrepareContextInput {
+  task: string;
+  mode?: PrepareMode | undefined;
+  repository?: string | undefined;
+  working_context?: string | undefined;
+  changed_files?: string[] | undefined;
+  token_budget?: number | undefined;
+  use_librarian?: LibrarianUse | undefined;
+}
+
+interface PrepareContextOutput {
+  context_pack: string;
+  mode_used: "light" | "deep";
+  sections: Record<string, string[]>;
+  used_memory_ids: string[];
+  confidence: number;
+  missing_info: string[];
+}
+
+interface CommitTaskItem {
+  content: string;
+  supersedes_id?: string | undefined;
+  confidence?: number | undefined;
+  anchors?: unknown[] | undefined;
+  metadata?: Record<string, unknown> | undefined;
+}
+
+interface CommitTaskInput {
+  task_summary: string;
+  decisions?: (string | CommitTaskItem)[] | undefined;
+  constraints?: (string | CommitTaskItem)[] | undefined;
+  processes?: (string | CommitTaskItem)[] | undefined;
+  gotchas?: (string | CommitTaskItem)[] | undefined;
+  roadmap?: (string | CommitTaskItem)[] | undefined;
+  changed_files?: string[] | undefined;
+  open_questions?: string[] | undefined;
+  repository?: string | undefined;
+}
+
+interface ProjectCandidate {
+  memory: Memory;
+  fts: number;
+  vector: number;
+  entity: number;
+  type: number;
+  importance: number;
+  recency: number;
+  score: number;
 }
 
 export class MemoryService {
@@ -203,6 +262,184 @@ export class MemoryService {
     };
   }
 
+  async prepareContext(input: PrepareContextInput): Promise<PrepareContextOutput> {
+    const selector = input.repository
+      ? { repository_mode: "specific" as const, repository: input.repository }
+      : { repository_mode: "current" as const };
+    const { repository_id } = await this.resolveRepository(selector);
+    const baseMode = this.modeForTask(input.task, input.mode ?? "auto");
+    const light = await this.retrieveProjectCandidates(input, repository_id, "light");
+    let candidates = light.candidates;
+    let modeUsed: "light" | "deep" = "light";
+
+    if (baseMode === "deep" || (input.mode ?? "auto") === "auto") {
+      const shouldEscalate =
+        baseMode === "deep" ||
+        this.hasConflictSignal(light.candidates, repository_id) ||
+        this.confidenceFor(light.candidates) < 0.45;
+      if (shouldEscalate) {
+        const deep = await this.retrieveProjectCandidates(input, repository_id, "deep");
+        candidates = deep.candidates;
+        modeUsed = "deep";
+      }
+    }
+
+    if (modeUsed === "deep") {
+      candidates = await this.rerankCandidates(input.task, candidates);
+    }
+
+    const budget = input.token_budget ?? (modeUsed === "deep" ? 3500 : 900);
+    const fallback = this.buildContextPack(candidates, budget, modeUsed);
+    const librarian = await this.runLibrarian(input, modeUsed, candidates);
+    const result = librarian ?? fallback;
+    const usedIds = new Set(result.used_memory_ids);
+    if (usedIds.size > 0) {
+      this.memories.batchUpdateAccessStats([...usedIds], repository_id).catch((err: unknown) => {
+        logger.debug("Failed to update project memory access stats", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
+    return result;
+  }
+
+  async commitTask(input: CommitTaskInput): Promise<{
+    created: number;
+    skipped_duplicates: number;
+    written_memory_ids: string[];
+    open_questions: string[];
+  }> {
+    const selector = input.repository
+      ? { repository_mode: "specific" as const, repository: input.repository }
+      : { repository_mode: "current" as const };
+    const resolved = await this.resolveRepository(selector);
+    if (!resolved.repository || !resolved.repository_id) throw new ValidationError("Repository not found");
+
+    const mappings: { key: keyof CommitTaskInput; memoryType: MemoryType; cardType: CardType; tag: string }[] = [
+      { key: "decisions", memoryType: "decision", cardType: "decision", tag: "decision" },
+      { key: "processes", memoryType: "procedure", cardType: "process", tag: "process" },
+      { key: "constraints", memoryType: "convention", cardType: "constraint", tag: "constraint" },
+      { key: "gotchas", memoryType: "episode", cardType: "gotcha", tag: "gotcha" },
+      { key: "roadmap", memoryType: "fact", cardType: "roadmap", tag: "roadmap" },
+    ];
+
+    let created = 0;
+    let skippedDuplicates = 0;
+    const written: string[] = [];
+    const fileTags = (input.changed_files ?? []).slice(0, 20).map((file) => `file:${file}`);
+
+    for (const mapping of mappings) {
+      const values = input[mapping.key];
+      if (!Array.isArray(values)) continue;
+      for (const raw of values) {
+        const item = this.normalizeCommitItem(raw);
+        if (!item) continue;
+        const externalId = `commit_task:${mapping.cardType}:${this.stableHash(item.content)}`;
+        const existing = await this.memories.findByExternalId(resolved.repository_id, externalId);
+        if (existing) {
+          skippedDuplicates++;
+          continue;
+        }
+
+        const metadata = {
+          task_summary: input.task_summary,
+          changed_files: input.changed_files ?? [],
+          ...(item.metadata ?? {}),
+        };
+        const memory = await this.rememberInRepository(
+          {
+            content: item.content,
+            memory_type: mapping.memoryType,
+            card_type: mapping.cardType,
+            status: "current",
+            source_type: "agent",
+            confidence: item.confidence ?? 0.85,
+            anchors_json: JSON.stringify(item.anchors ?? []),
+            metadata_json: JSON.stringify(metadata),
+            supersedes_id: item.supersedes_id,
+            tags: ["commit-task", mapping.tag, ...fileTags],
+            importance: this.defaultImportanceForCard(mapping.cardType),
+            external_id: externalId,
+            source: "commit_task",
+            created_by: getRequestContextOrDefault().user_id,
+          },
+          resolved.repository,
+          item.supersedes_id ?? null,
+        );
+        if (item.supersedes_id) {
+          await this.memories.updateCardState(
+            item.supersedes_id,
+            { status: "superseded", confidence: 0.7, source_type: "agent", supersedes_id: memory.id },
+            resolved.repository_id,
+          );
+          await this.relations.create({
+            repository_id: resolved.repository_id,
+            source_id: memory.id,
+            target_id: item.supersedes_id,
+            relation_type: "supersedes",
+            description: "commit_task superseded an older memory card.",
+            origin: "lineage",
+            confidence: 1,
+            metadata: { source: "commit_task" },
+            requireActiveEndpoints: false,
+          });
+        }
+        created++;
+        written.push(memory.id);
+      }
+    }
+
+    return {
+      created,
+      skipped_duplicates: skippedDuplicates,
+      written_memory_ids: written,
+      open_questions: (input.open_questions ?? []).filter((question) => question.trim().length > 0),
+    };
+  }
+
+  async correctMemory(input: {
+    id: string;
+    action: CorrectMemoryAction;
+    confidence?: number | undefined;
+    source_type?: MemorySourceType | undefined;
+    supersedes_id?: string | undefined;
+    repository?: string | undefined;
+  }): Promise<Memory | null> {
+    const selector = input.repository
+      ? { repository_mode: "specific" as const, repository: input.repository }
+      : { repository_mode: "current" as const };
+    const { repository_id } = await this.resolveRepository(selector);
+    const memory = await this.memories.findById(input.id, repository_id, { activeOnly: false });
+    if (!memory) return null;
+    const status = this.statusForAction(input.action);
+    const updated = await this.memories.updateCardState(
+      input.id,
+      {
+        status,
+        confidence: input.confidence ?? this.confidenceForStatus(status),
+        source_type: input.source_type ?? "agent",
+        supersedes_id: input.supersedes_id ?? memory.supersedes_id,
+      },
+      memory.repository_id,
+    );
+    if (updated) {
+      await this.audit.log({
+        repository_id: memory.repository_id,
+        memory_id: input.id,
+        action: "update",
+        actor: getRequestContextOrDefault().user_id,
+        changes: {
+          action: input.action,
+          status,
+          confidence: input.confidence ?? null,
+          source_type: input.source_type ?? "agent",
+          supersedes_id: input.supersedes_id ?? null,
+        },
+      });
+    }
+    return updated;
+  }
+
   async getActiveContext(
     tokenBudgetValue = 4000,
     workingOn?: string,
@@ -229,7 +466,11 @@ export class MemoryService {
       offset: 0,
     });
     const priority = memories
-      .filter((m) => ["convention", "decision", "fact", "procedure"].includes(m.memory_type))
+      .filter(
+        (m) =>
+          !["deprecated", "superseded", "wrong"].includes(m.status) &&
+          ["constraint", "decision", "fact", "process", "architecture", "preference"].includes(m.card_type),
+      )
       .sort((a, b) => b.importance - a.importance || +new Date(b.updated_at) - +new Date(a.updated_at))
       .slice(0, 12)
       .map((m) => this.toScoredMemory(m));
@@ -270,17 +511,23 @@ export class MemoryService {
       const txMemories = this.memories.withSql(() => tx);
       const txAudit = this.audit.withSql(() => tx);
       const txRelations = this.relations.withSql(() => tx);
+      await txMemories.updateCardState(existing.id, { status: "superseded", confidence: 0.7 }, existing.repository_id);
       await txMemories.invalidate(existing.id, existing.repository_id);
       const created = await txMemories.create({
         repository_id: existing.repository_id,
         user_id: existing.user_id,
         memory_type: existing.memory_type,
+        card_type: existing.card_type,
+        status: "current",
+        source_type: "agent",
+        confidence: 0.9,
         content: input.new_content,
         summary: generateSummary(input.new_content),
         importance: existing.importance,
         created_by: input.actor,
         source: existing.source,
         supersedes: existing.id,
+        supersedes_id: existing.id,
         external_id: null,
         embedding: await this.generateEmbedding(
           this.buildEmbeddingText(repository, existing.memory_type, existing.tags, input.new_content),
@@ -622,18 +869,6 @@ export class MemoryService {
     return this.memories.deleteBlock(repository.id, name);
   }
 
-  getAdminAnalytics(days: number) {
-    return this.memories.adminAnalytics(days);
-  }
-
-  listAdminMemories(filters: { limit: number; offset: number; search?: string; memoryType?: string; repository?: string }) {
-    return this.memories.adminListMemories(filters);
-  }
-
-  getAdminMemoryDetail(id: string) {
-    return this.memories.adminMemoryDetail(id);
-  }
-
   private async rememberInRepository(
     input: RememberInput,
     repository: RepositoryRecord,
@@ -652,7 +887,20 @@ export class MemoryService {
       if (existing) {
         const updated = await this.memories.update(
           existing.id,
-          { content: input.content, summary, importance, memory_type: input.memory_type, embedding },
+          {
+            content: input.content,
+            summary,
+            importance,
+            memory_type: input.memory_type,
+            card_type: input.card_type,
+            status: input.status,
+            source_type: input.source_type,
+            confidence: input.confidence,
+            anchors_json: input.anchors_json,
+            metadata_json: input.metadata_json,
+            supersedes_id: input.supersedes_id,
+            embedding,
+          },
           repository.id,
         );
         if (!updated) throw new ValidationError("Failed to update memory by external_id");
@@ -681,6 +929,13 @@ export class MemoryService {
             content: mergedContent,
             summary: generateSummary(mergedContent),
             importance: Math.max(existing.importance, importance),
+            card_type: input.card_type,
+            status: input.status,
+            source_type: input.source_type,
+            confidence: input.confidence,
+            anchors_json: input.anchors_json,
+            metadata_json: input.metadata_json,
+            supersedes_id: input.supersedes_id,
             embedding,
           },
           repository.id,
@@ -705,12 +960,19 @@ export class MemoryService {
       repository_id: repository.id,
       user_id: ctx.user_id,
       memory_type: input.memory_type,
+      card_type: input.card_type,
+      status: input.status,
+      source_type: input.source_type,
+      confidence: input.confidence,
+      anchors_json: input.anchors_json,
+      metadata_json: input.metadata_json,
       content: input.content,
       summary,
       importance,
       created_by: input.created_by,
       source: input.source ?? null,
       supersedes: supersedes ?? existingToSupersede ?? null,
+      supersedes_id: input.supersedes_id ?? supersedes ?? existingToSupersede ?? null,
       external_id: input.external_id ?? null,
       embedding,
       expires_at: expiresAt,
@@ -719,7 +981,14 @@ export class MemoryService {
       group_type: input.group_type ?? null,
     });
     await this.memories.setTags(memory.id, tags, repository.id);
-    if (existingToSupersede) await this.memories.invalidate(existingToSupersede, repository.id);
+    if (existingToSupersede) {
+      await this.memories.updateCardState(
+        existingToSupersede,
+        { status: "superseded", confidence: 0.7, source_type: "agent", supersedes_id: memory.id },
+        repository.id,
+      );
+      await this.memories.invalidate(existingToSupersede, repository.id);
+    }
     if (existingToSupersede) {
       await this.relations.create({
         repository_id: repository.id,
@@ -771,6 +1040,398 @@ export class MemoryService {
       memory.repository_id,
     );
     await this.memories.softDelete(memory.id, memory.repository_id);
+  }
+
+  private async retrieveProjectCandidates(
+    input: PrepareContextInput,
+    repositoryId: string | undefined,
+    mode: "light" | "deep",
+  ): Promise<{ candidates: ProjectCandidate[] }> {
+    const query = this.contextQuery(input);
+    const filters = { repository_id: repositoryId };
+    const embedding = await this.generateEmbedding(query, "query");
+    const searchLimit = mode === "deep" ? 45 : 20;
+    const fts = await this.memories.searchFts(query, filters, searchLimit);
+    const semantic = embedding ? await this.memories.searchSemantic(embedding, filters, searchLimit) : [];
+    const entity = await this.memories.searchByTagsEntitiesAndText(query, filters, searchLimit);
+    const candidateMap = new Map<string, ProjectCandidate>();
+
+    this.mergeCandidates(candidateMap, fts, "fts");
+    this.mergeCandidates(candidateMap, semantic, "vector");
+    this.mergeCandidates(candidateMap, entity, "entity");
+
+    if (mode === "deep") {
+      const typePrior = await this.memories.listByCardTypes(this.typePriorsForTask(input.task), filters, 30);
+      this.mergeCandidates(candidateMap, typePrior, "type");
+      const seedIds = [...candidateMap.values()]
+        .sort((a, b) => Math.max(b.fts, b.vector, b.entity, b.type) - Math.max(a.fts, a.vector, a.entity, a.type))
+        .slice(0, 12)
+        .map((candidate) => String(candidate.memory.id));
+      const relations = await this.relations.findByEntries(seedIds, repositoryId, { activeOnly: false });
+      const neighborIds = relations
+        .map((relation) => (seedIds.includes(relation.source_id) ? relation.target_id : relation.source_id))
+        .filter((id, index, ids) => !seedIds.includes(id) && ids.indexOf(id) === index);
+      const neighbors = await this.memories.findByIds(neighborIds, repositoryId);
+      const relationScore = new Map<string, number>();
+      for (const relation of relations) {
+        const id = seedIds.includes(relation.source_id) ? relation.target_id : relation.source_id;
+        relationScore.set(id, Math.max(relationScore.get(id) ?? 0, relation.confidence));
+      }
+      for (const memory of neighbors) {
+        this.mergeMemoryCandidate(candidateMap, memory, "entity", relationScore.get(memory.id) ?? 0.5);
+      }
+    }
+
+    return { candidates: this.scoreProjectCandidates([...candidateMap.values()], mode) };
+  }
+
+  private mergeCandidates(
+    target: Map<string, ProjectCandidate>,
+    memories: (Memory & { score?: number })[],
+    source: "fts" | "vector" | "entity" | "type",
+  ): void {
+    for (const memory of memories) {
+      this.mergeMemoryCandidate(target, memory, source, memory.score ?? 1);
+    }
+  }
+
+  private mergeMemoryCandidate(
+    target: Map<string, ProjectCandidate>,
+    memory: Memory,
+    source: "fts" | "vector" | "entity" | "type",
+    score: number,
+  ): void {
+    if (memory.status === "wrong") return;
+    const current =
+      target.get(memory.id) ??
+      ({
+        memory,
+        fts: 0,
+        vector: 0,
+        entity: 0,
+        type: 0,
+        importance: memory.importance,
+        recency: this.recencyScore(memory.updated_at),
+        score: 0,
+      } satisfies ProjectCandidate);
+    current[source] = Math.max(current[source], score);
+    target.set(memory.id, current);
+  }
+
+  private scoreProjectCandidates(candidates: ProjectCandidate[], mode: "light" | "deep"): ProjectCandidate[] {
+    const maxFts = Math.max(0.0001, ...candidates.map((candidate) => candidate.fts));
+    const maxVector = Math.max(0.0001, ...candidates.map((candidate) => candidate.vector));
+    const maxEntity = Math.max(0.0001, ...candidates.map((candidate) => candidate.entity));
+    const maxType = Math.max(0.0001, ...candidates.map((candidate) => candidate.type));
+    const scored = candidates
+      .filter((candidate) => candidate.memory.status !== "wrong")
+      .map((candidate) => {
+        const base =
+          (candidate.fts / maxFts) * 0.35 +
+          (candidate.vector / maxVector) * 0.35 +
+          (candidate.entity / maxEntity) * 0.1 +
+          (candidate.type / maxType) * 0.1 +
+          candidate.memory.importance * 0.05 +
+          candidate.recency * 0.05;
+        return { ...candidate, score: Math.max(0, base + this.statusModifier(candidate.memory.status)) };
+      })
+      .sort((a, b) => b.score - a.score);
+    return this.dedupProjectCandidates(scored).slice(0, mode === "deep" ? 40 : 15);
+  }
+
+  private buildContextPack(
+    candidates: ProjectCandidate[],
+    tokenBudgetValue: number,
+    mode: "light" | "deep",
+  ): PrepareContextOutput {
+    const sections: Record<string, string[]> = {
+      "Hard rules": [],
+      "Current decisions": [],
+      Process: [],
+      Architecture: [],
+      Legacy: [],
+      Gotchas: [],
+      Roadmap: [],
+      "Codebase hints": [],
+      "Open questions": [],
+      Confidence: [],
+    };
+    const used = new Set<string>();
+    let usedTokens = 0;
+    const budget = Math.max(100, tokenBudgetValue);
+
+    for (const candidate of candidates) {
+      const section = this.sectionForMemory(candidate.memory);
+      const line = this.formatContextLine(candidate);
+      const cost = this.estimateTokens(line);
+      if (usedTokens + cost > budget && used.size > 0) continue;
+      sections[section]?.push(line);
+      used.add(candidate.memory.id);
+      usedTokens += cost;
+      if (candidate.memory.status === "needs_review" || candidate.memory.status === "candidate") {
+        sections["Open questions"]?.push(`${candidate.memory.summary} (${candidate.memory.status})`);
+      }
+    }
+
+    const confidence = this.confidenceFor(candidates);
+    const missingInfo = used.size === 0 ? ["No relevant project memory found."] : [];
+    if (confidence < 0.5) missingInfo.push("Project memory confidence is low.");
+    sections["Confidence"] = [`${Math.round(confidence * 100)}% from ${used.size} memory cards (${mode}).`];
+    const contextPack = Object.entries(sections)
+      .filter(([, lines]) => lines.length > 0)
+      .map(([name, lines]) => [`## ${name}`, ...lines.map((line) => `- ${line}`)].join("\n"))
+      .join("\n\n");
+    return {
+      context_pack: contextPack,
+      mode_used: mode,
+      sections,
+      used_memory_ids: [...used],
+      confidence,
+      missing_info: missingInfo,
+    };
+  }
+
+  private async rerankCandidates(task: string, candidates: ProjectCandidate[]): Promise<ProjectCandidate[]> {
+    if ((process.env["LOCAL_MEMORY_RERANKER"] ?? "none") !== "command") return candidates;
+    const command = process.env["LOCAL_MEMORY_RERANKER_CMD"]?.trim();
+    if (!command) return candidates;
+    const output = await this.runJsonCommand(command, { task, candidates: this.commandCandidates(candidates) }, 10_000);
+    const ids = this.idsFromCommandOutput(output);
+    if (ids.length === 0) return candidates;
+    const byId = new Map(candidates.map((candidate) => [String(candidate.memory.id), candidate]));
+    const ordered = ids
+      .map((id) => byId.get(id))
+      .filter((candidate): candidate is ProjectCandidate => Boolean(candidate));
+    const rest = candidates.filter((candidate) => !ids.includes(candidate.memory.id));
+    return [...ordered, ...rest];
+  }
+
+  private async runLibrarian(
+    input: PrepareContextInput,
+    mode: "light" | "deep",
+    candidates: ProjectCandidate[],
+  ): Promise<PrepareContextOutput | null> {
+    const requested = input.use_librarian ?? "auto";
+    if (requested === "never") return null;
+    const envMode = process.env["LOCAL_MEMORY_LIBRARIAN_MODE"] ?? "off";
+    const command = process.env["LOCAL_MEMORY_LIBRARIAN_CMD"]?.trim();
+    const shouldRun =
+      Boolean(command) && (requested === "always" || envMode === "always" || (envMode === "auto" && mode === "deep"));
+    if (!shouldRun || !command) return null;
+    const timeout = Number(process.env["LOCAL_MEMORY_LIBRARIAN_TIMEOUT_MS"] ?? "30000");
+    const output = await this.runJsonCommand(
+      command,
+      { task: input.task, mode, candidates: this.commandCandidates(candidates) },
+      Number.isFinite(timeout) ? timeout : 30_000,
+    );
+    const sections = this.sectionsFromCommandOutput(output);
+    if (!sections) return null;
+    const usedIds = this.idsFromCommandOutput(output);
+    const confidence = this.numberField(output, "confidence") ?? this.confidenceFor(candidates);
+    const missingInfo = this.stringArrayField(output, "missing_info");
+    return {
+      context_pack: Object.entries(sections)
+        .filter(([, lines]) => lines.length > 0)
+        .map(([name, lines]) => [`## ${name}`, ...lines.map((line) => `- ${line}`)].join("\n"))
+        .join("\n\n"),
+      mode_used: mode,
+      sections,
+      used_memory_ids: usedIds,
+      confidence,
+      missing_info: missingInfo,
+    };
+  }
+
+  private runJsonCommand(command: string, payload: unknown, timeoutMs: number): Promise<unknown> {
+    return new Promise((resolve) => {
+      const child = spawn(command, { shell: true, stdio: ["pipe", "pipe", "pipe"] });
+      let stdout = "";
+      let done = false;
+      const finish = (value: unknown): void => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve(value);
+      };
+      const timer = setTimeout(() => {
+        child.kill("SIGTERM");
+        finish(null);
+      }, timeoutMs);
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString("utf-8");
+      });
+      child.on("error", () => finish(null));
+      child.on("close", (code) => {
+        if (code !== 0) {
+          finish(null);
+          return;
+        }
+        try {
+          finish(JSON.parse(stdout) as unknown);
+        } catch {
+          finish(null);
+        }
+      });
+      child.stdin.end(JSON.stringify(payload));
+    });
+  }
+
+  private contextQuery(input: PrepareContextInput): string {
+    return [input.task, input.working_context, ...(input.changed_files ?? [])].filter(Boolean).join("\n");
+  }
+
+  private modeForTask(task: string, requested: PrepareMode): "light" | "deep" {
+    if (requested === "light" || requested === "deep") return requested;
+    if (
+      /(auth|security|billing|migration|architecture|debug|refactor|безопас|миграц|архитект|рефактор|отлад)/i.test(task)
+    ) {
+      return "deep";
+    }
+    return "light";
+  }
+
+  private typePriorsForTask(task: string): CardType[] {
+    const base: CardType[] = ["constraint", "decision", "process", "architecture", "legacy", "gotcha"];
+    if (/roadmap|plan|план|road/i.test(task)) base.push("roadmap");
+    if (/preference|user|предпоч/i.test(task)) base.push("preference");
+    return base;
+  }
+
+  private sectionForMemory(memory: Memory): string {
+    if (memory.status === "deprecated" || memory.status === "superseded" || memory.card_type === "legacy")
+      return "Legacy";
+    if (memory.card_type === "constraint") return "Hard rules";
+    if (memory.card_type === "decision") return "Current decisions";
+    if (memory.card_type === "process") return "Process";
+    if (memory.card_type === "architecture") return "Architecture";
+    if (memory.card_type === "gotcha") return "Gotchas";
+    if (memory.card_type === "roadmap") return "Roadmap";
+    return "Codebase hints";
+  }
+
+  private formatContextLine(candidate: ProjectCandidate): string {
+    const memory = candidate.memory;
+    const score = Math.round(candidate.score * 100) / 100;
+    return `[${memory.id}] ${memory.summary} (${memory.card_type}, ${memory.status}, score ${score})`;
+  }
+
+  private statusModifier(status: MemoryStatus): number {
+    if (status === "current") return 0.2;
+    if (status === "candidate") return -0.15;
+    if (status === "needs_review") return -0.2;
+    if (status === "deprecated") return -0.5;
+    if (status === "superseded") return -0.6;
+    return 0;
+  }
+
+  private confidenceFor(candidates: ProjectCandidate[]): number {
+    if (candidates.length === 0) return 0;
+    const top = Math.max(...candidates.map((candidate) => candidate.score));
+    const countBoost = Math.min(0.25, candidates.length / 40);
+    return Math.max(0, Math.min(1, top * 0.75 + countBoost));
+  }
+
+  private hasConflictSignal(candidates: ProjectCandidate[], _repositoryId: string | undefined): boolean {
+    return candidates.some((candidate) => /conflict|contradict|конфликт|противореч/i.test(candidate.memory.content));
+  }
+
+  private dedupProjectCandidates(candidates: ProjectCandidate[]): ProjectCandidate[] {
+    const seen = new Set<string>();
+    const result: ProjectCandidate[] = [];
+    for (const candidate of candidates) {
+      const key = `${candidate.memory.card_type}:${candidate.memory.summary.toLowerCase().replace(/\s+/g, " ").trim()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(candidate);
+    }
+    return result;
+  }
+
+  private recencyScore(value: Date): number {
+    const ageMs = Date.now() - value.getTime();
+    if (Number.isNaN(ageMs)) return 0;
+    const ageDays = Math.max(0, ageMs / (1000 * 60 * 60 * 24));
+    return Math.min(1, Math.exp((-Math.LN2 * ageDays) / 45));
+  }
+
+  private commandCandidates(candidates: ProjectCandidate[]): unknown[] {
+    return candidates.slice(0, 40).map((candidate) => ({
+      id: candidate.memory.id,
+      summary: candidate.memory.summary,
+      content: candidate.memory.content,
+      card_type: candidate.memory.card_type,
+      status: candidate.memory.status,
+      tags: candidate.memory.tags,
+      score: candidate.score,
+    }));
+  }
+
+  private idsFromCommandOutput(output: unknown): string[] {
+    if (!output || typeof output !== "object") return [];
+    const record = output as Record<string, unknown>;
+    for (const key of ["used_memory_ids", "ordered_ids", "ids"]) {
+      const value = record[key];
+      if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
+    }
+    return [];
+  }
+
+  private sectionsFromCommandOutput(output: unknown): Record<string, string[]> | null {
+    if (!output || typeof output !== "object") return null;
+    const sections = (output as Record<string, unknown>)["sections"];
+    if (!sections || typeof sections !== "object" || Array.isArray(sections)) return null;
+    const result: Record<string, string[]> = {};
+    for (const [key, value] of Object.entries(sections)) {
+      result[key] = Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+    }
+    return result;
+  }
+
+  private numberField(output: unknown, key: string): number | null {
+    if (!output || typeof output !== "object") return null;
+    const value = (output as Record<string, unknown>)[key];
+    return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : null;
+  }
+
+  private stringArrayField(output: unknown, key: string): string[] {
+    if (!output || typeof output !== "object") return [];
+    const value = (output as Record<string, unknown>)[key];
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  }
+
+  private normalizeCommitItem(item: string | CommitTaskItem): CommitTaskItem | null {
+    if (typeof item === "string") {
+      const content = item.trim();
+      return content ? { content } : null;
+    }
+    const content = item.content.trim();
+    return content ? { ...item, content } : null;
+  }
+
+  private stableHash(content: string): string {
+    return createHash("sha256").update(content.trim().replace(/\s+/g, " ").toLowerCase()).digest("hex").slice(0, 32);
+  }
+
+  private defaultImportanceForCard(cardType: CardType): number {
+    if (cardType === "constraint" || cardType === "decision") return 0.8;
+    if (cardType === "process" || cardType === "architecture") return 0.7;
+    if (cardType === "gotcha") return 0.65;
+    return 0.55;
+  }
+
+  private statusForAction(action: CorrectMemoryAction): MemoryStatus {
+    if (action === "mark_wrong") return "wrong";
+    if (action === "mark_deprecated") return "deprecated";
+    if (action === "mark_superseded") return "superseded";
+    if (action === "mark_needs_review") return "needs_review";
+    return "current";
+  }
+
+  private confidenceForStatus(status: MemoryStatus): number {
+    if (status === "wrong") return 0;
+    if (status === "deprecated" || status === "superseded") return 0.5;
+    if (status === "needs_review") return 0.4;
+    return 0.85;
   }
 
   private async summarize(content: string): Promise<string> {
@@ -913,6 +1574,9 @@ export class MemoryService {
       summary: memory.summary,
       content: memory.content,
       memory_type: memory.memory_type,
+      card_type: memory.card_type,
+      status: memory.status,
+      source_type: memory.source_type,
       tags: memory.tags,
       importance: memory.importance,
       access_count: memory.access_count,

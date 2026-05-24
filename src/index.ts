@@ -1,10 +1,8 @@
 #!/usr/bin/env node
-import express from "express";
-import helmet from "helmet";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { loadConfig } from "./config.js";
 import { createMcpServer } from "./server.js";
 import { MemoryService } from "./services/memory.service.js";
@@ -13,8 +11,6 @@ import { logger } from "./services/logger.js";
 import { runMigrations } from "./db/migrate.js";
 import { closeDb } from "./db/connection.js";
 import { samplingContext } from "./context.js";
-import { registerApiRoutes } from "./api/routes.js";
-import { registerAdminRoutes } from "./api/admin-routes.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -36,23 +32,6 @@ process.on("unhandledRejection", (reason: unknown) => {
   const stack = reason instanceof Error ? reason.stack : undefined;
   logger.error("Unhandled rejection", { error: message, stack });
 });
-
-function modeFromArgs(): "stdio" | "web" {
-  if (process.argv.includes("--web") || process.argv.includes("web")) return "web";
-  return "stdio";
-}
-
-function publicDir(): string {
-  const distPublic = join(__dirname, "public");
-  if (existsSync(distPublic)) return distPublic;
-  return join(__dirname, "..", "public");
-}
-
-function assertLocalHost(host: string): void {
-  if (!["127.0.0.1", "localhost", "::1"].includes(host)) {
-    throw new Error(`Web/Admin UI must bind only to localhost. Refusing HOST=${host}`);
-  }
-}
 
 async function createMemoryService(config = loadConfig()): Promise<{
   service: MemoryService;
@@ -111,101 +90,9 @@ async function startStdio(): Promise<void> {
   logger.info("local-memory-mcp running on stdio");
 }
 
-async function startWeb(): Promise<void> {
-  const config = loadConfig();
-  assertLocalHost(config.host);
-  const { service, embeddingQueue } = await createMemoryService(config);
-
-  const app = express();
-  app.disable("x-powered-by");
-  app.use(
-    helmet({
-      contentSecurityPolicy: {
-        directives: {
-          defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", "'unsafe-inline'"],
-          styleSrc: ["'self'", "'unsafe-inline'"],
-          connectSrc: ["'self'"],
-          imgSrc: ["'self'", "data:"],
-        },
-      },
-    }),
-  );
-  app.use(express.json({ limit: "1mb" }));
-
-  const rateLimiter = createRateLimiter(config.rateLimitPerMin);
-  app.use("/api", rateLimiter);
-  app.use("/admin/api", rateLimiter);
-
-  app.get("/health", (_req, res) => {
-    res.json({ ok: true, mode: "local", version: APP_VERSION });
+startStdio().catch((err: unknown) => {
+  logger.error("Failed to start MCP server", {
+    error: err instanceof Error ? err.message : String(err),
   });
-
-  registerApiRoutes(app, service);
-  registerAdminRoutes(app, service);
-
-  const dir = publicDir();
-  app.use("/ui", express.static(dir));
-  app.get("/", (_req, res) => res.redirect("/ui"));
-  app.get("/ui", (_req, res) => res.sendFile(join(dir, "index.html")));
-
-  const server = app.listen(config.port, config.host, () => {
-    logger.info(`local-memory-web listening on http://${config.host}:${config.port}`, {
-      ui: `http://${config.host}:${config.port}/ui`,
-      admin: `http://${config.host}:${config.port}/admin`,
-    });
-  });
-
-  const shutdown = (signal: string): void => {
-    logger.info(`${signal} received. Shutting down web server...`);
-    server.close(async () => {
-      try {
-        if (embeddingQueue) await embeddingQueue.stop();
-        await closeDb();
-      } finally {
-        process.exit(0);
-      }
-    });
-  };
-
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
-  process.on("SIGINT", () => shutdown("SIGINT"));
-}
-
-function createRateLimiter(limitPerMin: number): express.RequestHandler {
-  const buckets = new Map<string, { count: number; resetAt: number }>();
-  const windowMs = 60_000;
-  return (req, res, next) => {
-    const key = req.ip ?? "local";
-    const now = Date.now();
-    const bucket = buckets.get(key);
-    if (!bucket || now > bucket.resetAt) {
-      buckets.set(key, { count: 1, resetAt: now + windowMs });
-      next();
-      return;
-    }
-    bucket.count++;
-    if (bucket.count > limitPerMin) {
-      res.status(429).json({ error: "Rate limit exceeded" });
-      return;
-    }
-    next();
-  };
-}
-
-const mode = modeFromArgs();
-if (mode === "web") {
-  startWeb().catch((err: unknown) => {
-    logger.error("Failed to start web server", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    process.exit(1);
-  });
-} else {
-  startStdio().catch((err: unknown) => {
-    logger.error("Failed to start MCP server", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    process.exit(1);
-  });
-}
+  process.exit(1);
+});

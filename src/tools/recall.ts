@@ -19,6 +19,9 @@ function compactMemory(m: {
   summary: string;
   content?: string;
   memory_type: string;
+  card_type?: string;
+  status?: string;
+  source_type?: string;
   tags: string[];
   importance: number;
   composite_score?: number;
@@ -39,6 +42,9 @@ function compactMemory(m: {
     summary: m.summary,
     content: m.content,
     memory_type: m.memory_type,
+    card_type: m.card_type,
+    status: m.status,
+    source_type: m.source_type,
     tags: m.tags,
     importance: Math.round(m.importance * 100) / 100,
     score: m.composite_score === undefined ? undefined : Math.round(m.composite_score * 1000) / 1000,
