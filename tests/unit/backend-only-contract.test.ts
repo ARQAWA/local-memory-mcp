@@ -36,16 +36,22 @@ describe("backend-only contract", () => {
     expect(pkg.scripts).not.toHaveProperty("dev:web");
     expect(pkg.scripts).toHaveProperty("setup:reranker");
     expect(pkg.scripts).toHaveProperty("doctor");
+    expect(pkg.scripts).toHaveProperty("smoke:singleton");
     expect(pkg.dependencies).not.toHaveProperty("express");
     expect(pkg.dependencies).not.toHaveProperty("helmet");
     expect(pkg.devDependencies).not.toHaveProperty("@types/express");
     expect(JSON.stringify(pkg)).not.toContain("hono");
   });
 
-  test("runtime entry point is stdio-only", () => {
+  test("runtime entry point is stdio proxy only", () => {
     const index = readProjectFile("src/index.ts");
 
     expect(index).toContain("StdioServerTransport");
+    expect(index).toContain("MemorydProxyClient");
+    expect(index).toContain("memoryd");
+    expect(index).not.toContain("MemoryService");
+    expect(index).not.toContain("JinaRerankerService");
+    expect(index).not.toContain("runMigrations");
     expect(index).not.toContain("express");
     expect(index).not.toContain("helmet");
     expect(index).not.toContain("registerAdminRoutes");

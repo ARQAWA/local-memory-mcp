@@ -1,16 +1,8 @@
 #!/usr/bin/env node
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { readFileSync } from "node:fs";
-import { loadConfig } from "./config.js";
-import { createMcpServer } from "./server.js";
-import { MemoryService } from "./services/memory.service.js";
-import { EmbeddingQueue } from "./services/embedding-queue.js";
-import { JinaRerankerService } from "./services/reranker.service.js";
 import { logger } from "./services/logger.js";
-import { runMigrations } from "./db/migrate.js";
-import { closeDb } from "./db/connection.js";
 import { samplingContext } from "./context.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -34,35 +26,11 @@ process.on("unhandledRejection", (reason: unknown) => {
   logger.error("Unhandled rejection", { error: message, stack });
 });
 
-async function createMemoryService(config = loadConfig()): Promise<{
-  service: MemoryService;
-  embeddingQueue: EmbeddingQueue | undefined;
-  reranker: JinaRerankerService;
-}> {
-  await runMigrations();
-  const reranker = new JinaRerankerService();
-  await reranker.start();
-
-  let embeddingQueue: EmbeddingQueue | undefined;
-  if (config.asyncEmbedding) {
-    const { MemoryRepository } = await import("./repositories/memory.repository.js");
-    embeddingQueue = new EmbeddingQueue(new MemoryRepository());
-    embeddingQueue.start();
-    logger.info("Async embedding queue enabled");
-  }
-
-  const service = new MemoryService({
-    embeddingQueue,
-    asyncEmbedding: config.asyncEmbedding,
-    reranker,
-  });
-
-  return { service, embeddingQueue, reranker };
-}
-
 async function startStdio(): Promise<void> {
-  const config = loadConfig();
-  const { service, embeddingQueue } = await createMemoryService(config);
+  const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
+  const { MemorydProxyClient } = await import("./memoryd/client.js");
+  const { createMcpServer } = await import("./server.js");
+  const service = new MemorydProxyClient();
   const { mcpServer, samplingService } = createMcpServer(service, APP_VERSION);
   const transport = new StdioServerTransport();
 
@@ -74,10 +42,7 @@ async function startStdio(): Promise<void> {
     }, 10_000).unref();
 
     try {
-      await service.flushSync();
-      if (embeddingQueue) await embeddingQueue.stop();
       await transport.close();
-      await closeDb();
     } catch (err: unknown) {
       logger.warn("Shutdown failed", {
         error: err instanceof Error ? err.message : String(err),
@@ -95,8 +60,18 @@ async function startStdio(): Promise<void> {
   logger.info("local-memory-mcp running on stdio");
 }
 
-startStdio().catch((err: unknown) => {
-  logger.error("Failed to start MCP server", {
+async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  if (args.includes("memoryd")) {
+    const { startMemorydServer } = await import("./memoryd/server.js");
+    await startMemorydServer();
+    return;
+  }
+  await startStdio();
+}
+
+main().catch((err: unknown) => {
+  logger.error("Failed to start local-memory-mcp", {
     error: err instanceof Error ? err.message : String(err),
   });
   process.exit(1);

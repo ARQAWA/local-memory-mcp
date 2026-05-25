@@ -55,7 +55,12 @@ function parseMetadata(raw: string | null): Record<string, string | number | boo
 
 function toEntity(row: EntityRow): Entity {
   const { pk: _pk, metadata, created_at, updated_at, ...rest } = row;
-  return { ...rest, metadata: parseMetadata(metadata), created_at: new Date(created_at), updated_at: new Date(updated_at) };
+  return {
+    ...rest,
+    metadata: parseMetadata(metadata),
+    created_at: new Date(created_at),
+    updated_at: new Date(updated_at),
+  };
 }
 
 function toRelation(row: EntityRelationRow): EntityRelation {
@@ -88,10 +93,11 @@ export class EntityRepository {
          DO UPDATE SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
         [id, repositoryId, name, entityType],
       );
-      const row = db.get<EntityRow>(
-        "SELECT * FROM entities WHERE repository_id = ? AND entity_type = ? AND name = ?",
-        [repositoryId, entityType, name],
-      );
+      const row = db.get<EntityRow>("SELECT * FROM entities WHERE repository_id = ? AND entity_type = ? AND name = ?", [
+        repositoryId,
+        entityType,
+        name,
+      ]);
       if (!row) throw new DatabaseError("Failed to find or create entity");
       return toEntity(row);
     });
@@ -150,7 +156,15 @@ export class EntityRepository {
        DO UPDATE SET
          description = COALESCE(excluded.description, entity_relations.description),
          memory_id = COALESCE(excluded.memory_id, entity_relations.memory_id)`,
-      [id, data.repositoryId, data.sourceId, data.targetId, data.relationType, data.description ?? null, data.memoryId ?? null],
+      [
+        id,
+        data.repositoryId,
+        data.sourceId,
+        data.targetId,
+        data.relationType,
+        data.description ?? null,
+        data.memoryId ?? null,
+      ],
     );
     const row = db.get<EntityRelationRow>(
       `SELECT * FROM entity_relations

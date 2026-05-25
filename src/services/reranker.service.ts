@@ -23,6 +23,12 @@ export interface Reranker {
   close(): Promise<void>;
 }
 
+export interface RerankerStatus {
+  ready: boolean;
+  worker_pid: number | null;
+  model_path: string;
+}
+
 interface JinaRerankerOptions {
   appRoot?: string | undefined;
   pythonPath?: string | undefined;
@@ -114,7 +120,8 @@ export class JinaRerankerService implements Reranker {
       options?.workerPath ??
       process.env["LOCAL_MEMORY_RERANKER_WORKER_PATH"] ??
       join(this.appRoot, "python", "jina_reranker_worker.py");
-    this.modelPath = options?.modelPath ?? process.env["LOCAL_MEMORY_RERANKER_MODEL_PATH"] ?? DEFAULT_RERANKER_MODEL_PATH;
+    this.modelPath =
+      options?.modelPath ?? process.env["LOCAL_MEMORY_RERANKER_MODEL_PATH"] ?? DEFAULT_RERANKER_MODEL_PATH;
     this.startupTimeoutMs =
       options?.startupTimeoutMs ?? positiveInt(process.env["LOCAL_MEMORY_RERANKER_STARTUP_TIMEOUT_MS"], 120_000);
     this.requestTimeoutMs =
@@ -160,6 +167,14 @@ export class JinaRerankerService implements Reranker {
       { id: "relevant", text: "Local Memory MCP uses a mandatory Jina MLX reranker for retrieval." },
       { id: "irrelevant", text: "This passage talks about unrelated weather." },
     ]);
+  }
+
+  status(): RerankerStatus {
+    return {
+      ready: this.ready,
+      worker_pid: this.child?.pid ?? null,
+      model_path: this.modelPath,
+    };
   }
 
   async close(): Promise<void> {

@@ -18,10 +18,30 @@ This README is for humans. Agent behavior is defined by
   because identity is rooted in the canonical project path.
 - Cross-repository reads are explicit: use `repository_mode=specific` or
   `repository_mode=all`.
-- The runtime surface is MCP stdio only.
+- The runtime surface is MCP stdio plus one local `memoryd` backend.
+- MCP stdio processes are proxy connectors only.
+- `memoryd` is the only process that opens SQLite, retrieval runtime, and Jina.
+- Multiple clients and MCP sessions share the same `memoryd`.
+- There is no per-MCP model load.
 
 There is no per-agent database, per-repository database, or alternate identity
 layer.
+
+## Runtime
+
+`memoryd` is a singleton per user and host. The first MCP stdio process starts
+it when needed. Later MCP processes reuse it over a Unix socket.
+
+State files:
+
+- `$HOME/.local/share/local-memory-mcp/memoryd.sock`
+- `$HOME/.local/share/local-memory-mcp/memoryd.pid`
+- `$HOME/.local/share/local-memory-mcp/memoryd.lock`
+- `$HOME/.local/share/local-memory-mcp/memoryd.log`
+
+If the pid is stale or the socket is dead, the proxy cleans up state and starts
+`memoryd` again. The log records `started`, `reused`, `stopped`,
+`stale cleanup`, and `error` events.
 
 Repository identity rows are hardened:
 
@@ -64,11 +84,11 @@ context packs and write durable task learnings with `commit_task`.
 
 ## Retrieval
 
-Retrieval requires `jinaai/jina-reranker-v3-mlx` on macOS Apple Silicon. The
-backend starts a local Python/MLX worker as a child process and keeps the model
-ready. There is no fallback or none mode. If the venv, MLX import, model path,
-or sample rerank is not ready, startup and `pnpm run doctor` fail with a clear
-error.
+Retrieval requires `jinaai/jina-reranker-v3-mlx` on macOS Apple Silicon.
+`memoryd` starts exactly one local Python/MLX worker as a child process and
+keeps the model ready. MCP stdio processes never start Jina. There is no
+fallback or none mode. If the venv, MLX import, model path, or worker is not
+ready, `memoryd` startup and `pnpm run doctor` fail with a clear error.
 
 `prepare_context(light)` uses FTS, semantic search, tags, and entities to
 collect up to 30 candidates. It reranks candidates with Jina MLX, keeps the top
@@ -132,6 +152,9 @@ Do not copy this README as an agent contract.
 
 Use `INSTALL_AGENT_PROMPT.md` for a fresh install or reinstall.
 
+Use `INSTALL_PROFILES.md` after install to configure specific clients:
+Codex, Claude Code, Cursor, and VS Code / GitHub Copilot.
+
 The installer must:
 
 - clean stale `dist` output before build;
@@ -142,7 +165,29 @@ The installer must:
 - run migrations;
 - create a SQLite backup before pending migrations;
 - run `pnpm run doctor`;
+- run `pnpm run smoke:mcp-session`;
+- run `pnpm run smoke:librarian-modes`;
+- run `pnpm run smoke:singleton`;
 - create or reuse the local SQLite database file;
 - link `local-memory-mcp` into `$HOME/.local/bin`;
 - verify a fresh MCP session exposes only `prepare_context`, `commit_task`,
   and `correct_memory`.
+
+Useful live smoke:
+
+```bash
+pnpm run smoke:mcp-session
+pnpm run smoke:librarian-modes
+pnpm run smoke:singleton
+```
+
+The smoke starts a fresh stdio MCP session, verifies the public tool list, runs
+`prepare_context`, and proves a live librarian command receives JSON input and
+returns the context pack. The librarian mode smoke verifies:
+
+- `off`: command is not called;
+- `auto`: command failure falls back to the local pack;
+- `always`: command failure makes `prepare_context` fail.
+
+The singleton smoke starts three MCP stdio sessions and proves they share one
+`memoryd` process and one Jina worker.

@@ -27,6 +27,17 @@ Memory model:
 - Cross-repository reads require an explicit user request.
 - Do not create a per-agent database.
 - Do not create a per-repository database.
+- MCP stdio is a proxy connector only.
+- `memoryd` is the singleton backend for this user and host.
+- Only `memoryd` opens SQLite, retrieval runtime, and Jina.
+- Multiple clients and MCP sessions share one `memoryd`.
+- There is no per-MCP Jina/model load.
+
+Backend state files:
+- `$HOME/.local/share/local-memory-mcp/memoryd.sock`
+- `$HOME/.local/share/local-memory-mcp/memoryd.pid`
+- `$HOME/.local/share/local-memory-mcp/memoryd.lock`
+- `$HOME/.local/share/local-memory-mcp/memoryd.log`
 
 Install path:
 `$HOME/.local/share/local-memory-mcp/app`
@@ -41,6 +52,8 @@ Rules:
 - Do not create `.env`, `.env.local`, or `.env.example`.
 - Use global system environment variables only.
 - Do not clone into an application repository.
+- Do not change the host agent personality, tone, style rules, or ARQAWA
+  rules. Install or replace only the managed Local Memory MCP contract block.
 - Use `LOCAL_MEMORY_DB_PATH` only when the default database path must change.
 - Use `OPENROUTER_API_KEY` for embeddings.
 - The Jina MLX reranker is mandatory. Do not install a fallback or none mode.
@@ -57,28 +70,79 @@ Rules:
 
 Steps:
 1. Detect the current agent host.
-2. Install or update the repo at the install path.
+2. Detect the active app path and active command path.
+   - Default app path: `$HOME/.local/share/local-memory-mcp/app`.
+   - Default command: `$HOME/.local/bin/local-memory-mcp`.
+3. Stop or ignore old web/admin/MCP leftovers.
+   - Do not restart old web/admin services.
+   - Remove stale web/admin files from the active app during sync.
+   - Do not restore removed public tools.
+4. Back up the live SQLite DB before changing the active app.
+   - Use `VACUUM INTO` to create a backup under
+     `$HOME/.local/share/local-memory-mcp/backups`.
+   - Do not continue if the backup fails.
+5. Install or update the repo at the install path.
    - If this prompt is in an already checked-out repo, use that repo/ref as
      the source.
    - Do not assume GitHub `main` contains local uncommitted work unless the
      user explicitly says to install from GitHub.
    - Remove stale files from the install path before copying/building.
-3. Install dependencies with `pnpm install --frozen-lockfile`.
-4. Run `pnpm run setup:reranker`.
-5. Run `pnpm exec tsc --noEmit --incremental false`.
-6. Run `pnpm exec eslint src tests --max-warnings=0`.
-7. Run `pnpm test`.
-8. Build with `pnpm run build`.
-9. Run migrations with `node dist/db/migrate.js`.
-10. Run `pnpm run doctor`.
-11. Link command wrappers into `$HOME/.local/bin`.
-12. Configure a global MCP server named `local-memory`.
+6. Install dependencies with `pnpm install --frozen-lockfile`.
+7. Run `pnpm run setup:reranker`.
+8. Run `pnpm exec tsc --noEmit --incremental false`.
+9. Run `pnpm exec eslint src tests --max-warnings=0`.
+10. Run `pnpm test`.
+11. Build with `pnpm run build`.
+12. Run migrations with `node dist/db/migrate.js`.
+13. Run `pnpm run doctor`.
+14. Run `pnpm run smoke:mcp-session`.
+15. Run `pnpm run smoke:librarian-modes`.
+16. Run `pnpm run smoke:singleton`.
+17. Link command wrappers into `$HOME/.local/bin`.
+18. Configure a global MCP server named `local-memory`.
     - For Codex, set `required = true` for `mcp_servers.local-memory`.
-13. Install the managed contract below into the host global rules.
+19. Install the managed contract below into the host global rules.
     - Replace only the managed `LOCAL_MEMORY_MCP_AGENT_CONTRACT` block.
     - Preserve unrelated rules and other managed blocks, including ARQAWA
       blocks.
-14. Start a fresh agent/MCP session and verify tool schemas.
+20. Configure or document native memory-librarian setup for the client profile.
+21. Start a fresh agent/MCP session and verify tool schemas and the expected
+    route: `prepare_context(auto)` -> work -> `prepare_context(light)` ->
+    `commit_task`.
+
+Client-specific short instructions:
+
+Use `INSTALL_PROFILES.md` as the concise client setup reference after the
+backend is installed.
+
+Codex:
+- Configure `~/.codex/config.toml` with `mcp_servers.local-memory`.
+- Use command `$HOME/.local/bin/local-memory-mcp`.
+- Set `required = true`.
+- Install the managed contract into `~/.codex/AGENTS.md`.
+
+Claude Code:
+- Add the MCP server at user scope:
+  `claude mcp add local-memory --scope user -- $HOME/.local/bin/local-memory-mcp`.
+- Install a separate Claude memory contract in the Claude Code user/global
+  instruction target.
+- If a local librarian is needed, configure a Claude Code subagent separately.
+  Claude Code subagents can inherit configured MCP tools.
+- Do not mark Claude Code verification complete unless it was tested on this
+  host.
+
+Cursor:
+- Configure `~/.cursor/mcp.json` for global use, or `.cursor/mcp.json` for a
+  project-local setup.
+- Add `local-memory` with command `$HOME/.local/bin/local-memory-mcp`.
+- Install the managed contract into Cursor User Rules or project rules.
+
+GitHub Copilot / VS Code:
+- For VS Code, configure the user or workspace `mcp.json`, or use
+  `code --add-mcp`.
+- For Copilot CLI, use `/mcp add` or edit `~/.copilot/mcp-config.json`.
+- Add only the `local-memory` stdio server command and the managed contract in
+  the client instruction location.
 
 Install checks:
 - `dist` must be freshly built after `rm -rf dist`.
@@ -90,8 +154,11 @@ Install checks:
 - Migration must create a SQLite backup before pending migrations.
 - `pnpm run doctor` must pass.
 - Doctor must verify macOS Apple Silicon, Python venv, MLX import, model path,
-  and a sample rerank.
-- The active build must expose the MCP stdio backend only.
+  one `memoryd`, and one Jina worker inside `memoryd`.
+- `pnpm run smoke:singleton` must prove 3 MCP stdio sessions -> 1 memoryd ->
+  1 Jina worker.
+- The active build must expose MCP stdio proxy only.
+- `memoryd` must be the only backend process.
 - MCP schemas must expose only:
   `prepare_context`, `commit_task`, `correct_memory`.
 - MCP schemas must not expose raw memory read, write, graph, or maintenance
@@ -102,6 +169,25 @@ Install checks:
   duplicate, or replace the Local Memory MCP contract.
 - Codex config must mark `mcp_servers.local-memory` with `required = true`.
 - A fresh agent session must expose Local Memory MCP before doing work.
+- Fresh-session behavior verification must test the agent route itself:
+  `prepare_context(auto)` -> work -> `prepare_context(light)` -> `commit_task`.
+- The first `prepare_context(auto)` call must be agent-initiated before the
+  plan or implementation, not manually requested as a tool smoke test.
+- The light-mode check must be a narrow follow-up inside the same task.
+- The commit check must prove the agent uses `commit_task`, not removed raw
+  memory tools.
+- Librarian verification must set
+  `LOCAL_MEMORY_LIBRARIAN_MODE=always` and
+  `LOCAL_MEMORY_LIBRARIAN_CMD=<test command>`, then prove
+  `prepare_context` invokes the command with JSON input and uses JSON output.
+- Librarian fallback verification must also test `auto` failure fallback and
+  `always` failure as a clear `prepare_context` error.
+- `pnpm run smoke:mcp-session` verifies a fresh stdio MCP session exposes only
+  the public tools and that a live librarian command is called.
+- `pnpm run smoke:librarian-modes` verifies `off`, `auto`, and `always`
+  librarian mode behavior.
+- `pnpm run smoke:singleton` verifies multiple MCP sessions share one
+  `memoryd` and one Jina worker.
 
 Managed contract:
 

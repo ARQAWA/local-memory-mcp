@@ -16,7 +16,6 @@ import type {
   ListMemoriesInput,
   Memory,
   MemoryStats,
-  MemorySourceType,
   MemoryStatus,
   MemoryType,
   RelatedMode,
@@ -35,11 +34,20 @@ import { EmbeddingQueue } from "./embedding-queue.js";
 import type { EmbeddingPurpose } from "./embedding.service.js";
 import { getEmbeddingProvider } from "./embedding.service.js";
 import { EntityExtractionService } from "./entity-extraction.service.js";
-import { LibrarianRunner, type LibrarianUse } from "./librarian.service.js";
+import { LibrarianRunner } from "./librarian.service.js";
 import { logger } from "./logger.js";
 import type { Reranker, RerankCandidateInput } from "./reranker.service.js";
 import { RERANKER_OPERATIONAL_ERROR } from "./reranker.service.js";
 import { compositeScore, generateSummary, scoreImportance, tokenBudget } from "./scoring.service.js";
+import type {
+  CommitTaskInput,
+  CommitTaskItem,
+  CorrectMemoryAction,
+  CorrectMemoryInput,
+  PrepareContextInput,
+  PrepareContextOutput,
+  PrepareMode,
+} from "../tools/project-memory-backend.js";
 
 export interface MemoryServiceDeps {
   memories?: MemoryRepository;
@@ -51,48 +59,6 @@ export interface MemoryServiceDeps {
   asyncEmbedding?: boolean | undefined;
   reranker?: Reranker | undefined;
   librarian?: LibrarianRunner | undefined;
-}
-
-type PrepareMode = "auto" | "light" | "deep";
-type CorrectMemoryAction = "mark_wrong" | "mark_deprecated" | "mark_superseded" | "mark_needs_review" | "mark_current";
-
-interface PrepareContextInput {
-  task: string;
-  mode?: PrepareMode | undefined;
-  repository?: string | undefined;
-  working_context?: string | undefined;
-  changed_files?: string[] | undefined;
-  token_budget?: number | undefined;
-  use_librarian?: LibrarianUse | undefined;
-}
-
-interface PrepareContextOutput {
-  context_pack: string;
-  mode_used: "light" | "deep";
-  sections: Record<string, string[]>;
-  used_memory_ids: string[];
-  confidence: number;
-  missing_info: string[];
-}
-
-interface CommitTaskItem {
-  content: string;
-  supersedes_id?: string | undefined;
-  confidence?: number | undefined;
-  anchors?: unknown[] | undefined;
-  metadata?: Record<string, unknown> | undefined;
-}
-
-interface CommitTaskInput {
-  task_summary: string;
-  decisions?: (string | CommitTaskItem)[] | undefined;
-  constraints?: (string | CommitTaskItem)[] | undefined;
-  processes?: (string | CommitTaskItem)[] | undefined;
-  gotchas?: (string | CommitTaskItem)[] | undefined;
-  roadmap?: (string | CommitTaskItem)[] | undefined;
-  changed_files?: string[] | undefined;
-  open_questions?: string[] | undefined;
-  repository?: string | undefined;
 }
 
 interface ProjectCandidate {
@@ -391,8 +357,12 @@ export class MemoryService {
             requireActiveEndpoints: false,
           });
         }
-        created++;
-        written.push(memory.id);
+        if (memory.dedup_action === "create" || memory.dedup_action === "supersede") {
+          created++;
+        } else {
+          skippedDuplicates++;
+        }
+        if (!written.includes(memory.id)) written.push(memory.id);
       }
     }
 
@@ -404,14 +374,7 @@ export class MemoryService {
     };
   }
 
-  async correctMemory(input: {
-    id: string;
-    action: CorrectMemoryAction;
-    confidence?: number | undefined;
-    source_type?: MemorySourceType | undefined;
-    supersedes_id?: string | undefined;
-    repository?: string | undefined;
-  }): Promise<Memory | null> {
+  async correctMemory(input: CorrectMemoryInput): Promise<Memory | null> {
     const selector = input.repository
       ? { repository_mode: "specific" as const, repository: input.repository }
       : { repository_mode: "current" as const };
@@ -1201,7 +1164,10 @@ export class MemoryService {
 
   private async rerankProjectCandidates(query: string, candidates: ProjectCandidate[]): Promise<ProjectCandidate[]> {
     if (!this.reranker) {
-      throw new ExternalServiceError("Jina MLX reranker", `${RERANKER_OPERATIONAL_ERROR}: backend started without worker`);
+      throw new ExternalServiceError(
+        "Jina MLX reranker",
+        `${RERANKER_OPERATIONAL_ERROR}: backend started without worker`,
+      );
     }
     if (candidates.length === 0) return [];
     const rerankInput: RerankCandidateInput[] = candidates.map((candidate) => ({
@@ -1366,7 +1332,8 @@ export class MemoryService {
         const diversityPenalty = selectedTerms.length
           ? Math.max(...selectedTerms.map((other) => this.jaccard(terms, other)))
           : 0;
-        const mmrScore = candidate.score * 0.85 - diversityPenalty * 0.15 - this.statusRank(candidate.memory.status) * 0.01;
+        const mmrScore =
+          candidate.score * 0.85 - diversityPenalty * 0.15 - this.statusRank(candidate.memory.status) * 0.01;
         if (mmrScore > bestScore) {
           bestScore = mmrScore;
           bestIndex = i;

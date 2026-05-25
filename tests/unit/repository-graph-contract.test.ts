@@ -63,9 +63,16 @@ describe("repository graph contract", () => {
     expect(readme).toContain("correct_memory");
     expect(readme).toContain("Raw memory tools are not public");
     expect(readme).toContain("jinaai/jina-reranker-v3-mlx");
-    expect(readme).toContain("There is no fallback or none mode");
+    expect(readme).toContain("fallback or none mode");
+    expect(readme).toContain("MCP stdio processes are proxy connectors only");
+    expect(readme).toContain("memoryd");
+    expect(readme).toContain("memoryd.sock");
+    expect(readme).toContain("no per-MCP model load");
     expect(readme).toContain("pnpm run setup:reranker");
     expect(readme).toContain("pnpm run doctor");
+    expect(readme).toContain("INSTALL_PROFILES.md");
+    expect(readme).toContain("pnpm run smoke:librarian-modes");
+    expect(readme).toContain("pnpm run smoke:singleton");
     expect(readme).not.toContain("Use memory when " + "it helps the task");
     expect(readme).not.toContain("At the start of non-" + "trivial work");
     expect(readme).not.toContain("LOCAL_MEMORY_RERANKER=none");
@@ -114,6 +121,8 @@ describe("repository graph contract", () => {
     const toolsIndex = readProjectFile("src/tools/index.ts");
 
     expect(server).toContain("Local Memory MCP is the agent core");
+    expect(server).toContain("proxy only");
+    expect(server).toContain("singleton local memoryd backend");
     expect(server).toContain("prepare_context(auto)");
     expect(server).toContain("Work from the returned context_pack");
     expect(server).toContain("commit_task");
@@ -146,6 +155,64 @@ describe("repository graph contract", () => {
 
     expect(prompt).toContain("set `required = true` for `mcp_servers.local-memory`");
     expect(prompt).toContain("Codex config must mark `mcp_servers.local-memory` with `required = true`");
+    expect(prompt).toContain("Do not change the host agent personality, tone, style rules, or ARQAWA");
+    expect(prompt).toContain("~/.codex/config.toml");
+    expect(prompt).toContain("~/.codex/AGENTS.md");
+    expect(prompt).toContain("INSTALL_PROFILES.md");
+  });
+
+  test("install prompt documents fresh-session agent route and host configs", () => {
+    const prompt = readProjectFile("INSTALL_AGENT_PROMPT.md");
+
+    expect(prompt).toContain("Client-specific short instructions");
+    expect(prompt).toContain("Claude Code:");
+    expect(prompt).toContain("claude mcp add local-memory --scope user");
+    expect(prompt).toContain("Claude Code subagents can inherit configured MCP tools");
+    expect(prompt).toContain("Cursor:");
+    expect(prompt).toContain("~/.cursor/mcp.json");
+    expect(prompt).toContain(".cursor/mcp.json");
+    expect(prompt).toContain("GitHub Copilot / VS Code:");
+    expect(prompt).toContain("code --add-mcp");
+    expect(prompt).toContain("~/.copilot/mcp-config.json");
+    expect(prompt).toContain("prepare_context(auto)` -> work -> `prepare_context(light)` -> `commit_task");
+    expect(prompt).toContain("MCP stdio is a proxy connector only");
+    expect(prompt).toContain("memoryd.sock");
+    expect(prompt).toContain("VACUUM INTO");
+    expect(prompt).toContain("pnpm run smoke:singleton");
+    expect(prompt).toContain("agent-initiated before the");
+    expect(prompt).toContain("LOCAL_MEMORY_LIBRARIAN_CMD=<test command>");
+    expect(prompt).toContain("JSON input and uses JSON output");
+    expect(prompt).toContain("pnpm run smoke:mcp-session");
+    expect(prompt).toContain("pnpm run smoke:librarian-modes");
+  });
+
+  test("install profiles cover supported clients and verification commands", () => {
+    const profiles = readProjectFile("INSTALL_PROFILES.md");
+
+    expect(profiles).toContain("# Local Memory MCP Install Profiles");
+    expect(profiles).toContain("## Codex");
+    expect(profiles).toContain("~/.codex/config.toml");
+    expect(profiles).toContain("required = true");
+    expect(profiles).toContain("## Claude Code");
+    expect(profiles).toContain("claude mcp add local-memory --scope user");
+    expect(profiles).toContain("inherits MCP tools by default");
+    expect(profiles).toContain("memoryd is the singleton backend");
+    expect(profiles).toContain("memoryd.sock");
+    expect(profiles).toContain("memory-librarian");
+    expect(profiles).toContain("prepare_context(auto) -> work -> prepare_context(light) -> commit_task");
+    expect(profiles).toContain("## Cursor");
+    expect(profiles).toContain("~/.cursor/mcp.json");
+    expect(profiles).toContain("cursor-agent mcp list-tools local-memory");
+    expect(profiles).toContain("## VS Code / GitHub Copilot");
+    expect(profiles).toContain(".vscode/mcp.json");
+    expect(profiles).toContain("~/.copilot/mcp-config.json");
+    expect(profiles).toContain("copilot mcp add local-memory");
+    expect(profiles).toContain("pnpm run smoke:mcp-session");
+    expect(profiles).toContain("pnpm run smoke:librarian-modes");
+    expect(profiles).toContain("pnpm run smoke:singleton");
+    expect(profiles).toContain("prepare_context");
+    expect(profiles).toContain("commit_task");
+    expect(profiles).toContain("correct_memory");
   });
 
   test("SQLite schema keeps repository graph, FTS, vector tables, and card migration", () => {

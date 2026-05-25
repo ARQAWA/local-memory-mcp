@@ -1,8 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getRequestContextOrDefault } from "../context.js";
-import { MemoryService } from "../services/memory.service.js";
 import { memorySourceTypes } from "../types/memory.js";
+import type { ProjectMemoryBackend } from "./project-memory-backend.js";
 import { requireWritePermission, withErrorHandling } from "./util.js";
 
 const CommitItemSchema = z.union([
@@ -18,12 +18,12 @@ const CommitItemSchema = z.union([
     .strict(),
 ]);
 
-export function registerProjectMemoryTools(server: McpServer, service: MemoryService) {
+export function registerProjectMemoryTools(server: McpServer, service: ProjectMemoryBackend) {
   server.registerTool(
     "prepare_context",
     {
       description:
-        "Prepare a compact project-memory context pack for the next task. Light and deep retrieval both use the mandatory local Jina MLX reranker; deep mode can optionally use a librarian subagent after reranking.",
+        "Prepare a compact project-memory context pack for the next task. Light and deep retrieval both use the mandatory local Jina MLX reranker, singleton inside memoryd; deep mode can optionally use a librarian subagent after reranking.",
       inputSchema: {
         task: z.string().min(1).describe("Task or question to prepare context for"),
         mode: z.enum(["auto", "light", "deep"]).default("auto"),

@@ -60,7 +60,8 @@ function parseOutput(value: unknown): LibrarianOutput | null {
   return {
     sections,
     used_memory_ids: parseStringArray(record["used_memory_ids"]),
-    confidence: typeof confidence === "number" && Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0.5,
+    confidence:
+      typeof confidence === "number" && Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0.5,
     missing_info: parseStringArray(record["missing_info"]),
   };
 }
@@ -79,7 +80,8 @@ export class LibrarianRunner {
     if (mode === "off") return null;
     const command = this.env["LOCAL_MEMORY_LIBRARIAN_CMD"]?.trim();
     if (!command) {
-      if (mode === "always") throw serviceError("LOCAL_MEMORY_LIBRARIAN_MODE=always but LOCAL_MEMORY_LIBRARIAN_CMD is empty");
+      if (mode === "always")
+        throw serviceError("LOCAL_MEMORY_LIBRARIAN_MODE=always but LOCAL_MEMORY_LIBRARIAN_CMD is empty");
       return null;
     }
     try {

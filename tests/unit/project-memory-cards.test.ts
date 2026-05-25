@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -8,6 +8,7 @@ import { closeDb, getDb } from "../../src/db/connection.js";
 import { runMigrations } from "../../src/db/migrate.js";
 import { MemoryRepository } from "../../src/repositories/memory.repository.js";
 import { RelationRepository } from "../../src/repositories/relation.repository.js";
+import { DedupService } from "../../src/services/dedup.service.js";
 import { resetGitIdentityCache } from "../../src/services/git-identity.service.js";
 import { MemoryService } from "../../src/services/memory.service.js";
 import { resetEmbeddingProvider } from "../../src/services/embedding.service.js";
@@ -95,7 +96,9 @@ class TestReranker implements Reranker {
   async rerank(query: string, candidates: RerankCandidateInput[]): Promise<RerankResult[]> {
     this.calls.push({ query, candidates });
     const ordered = this.order
-      ? this.order.map((id) => candidates.find((candidate) => candidate.id === id)).filter((item): item is RerankCandidateInput => Boolean(item))
+      ? this.order
+          .map((id) => candidates.find((candidate) => candidate.id === id))
+          .filter((item): item is RerankCandidateInput => Boolean(item))
       : [...candidates];
     const rest = candidates.filter((candidate) => !ordered.some((item) => item.id === candidate.id));
     return [...ordered, ...rest].map((candidate, index) => ({ id: candidate.id, score: 1 - index }));
@@ -108,6 +111,10 @@ class TestReranker implements Reranker {
   async close(): Promise<void> {
     return Promise.resolve();
   }
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 describe("project memory cards", () => {
@@ -375,6 +382,33 @@ describe("project memory cards", () => {
     expect(result.mode_used).toBe("deep");
   });
 
+  test("librarian off mode does not call configured command", async () => {
+    if (!dir) throw new Error("missing temp dir");
+    await runMigrations();
+    const repo = new MemoryRepository();
+    const repository = await ensureRepo(repo, "librarian-off-repo");
+    await createMemory(repo, repository.id, "Off mode local memory", {
+      memoryType: "reference",
+      cardType: "architecture",
+    });
+
+    const tracePath = join(dir, "librarian-off-called.txt");
+    process.env["LOCAL_MEMORY_LIBRARIAN_MODE"] = "off";
+    process.env["LOCAL_MEMORY_LIBRARIAN_CMD"] = `node -e "require('node:fs').writeFileSync(${JSON.stringify(
+      tracePath,
+    )}, 'called')"`;
+
+    const result = await new MemoryService({ reranker: new TestReranker() }).prepareContext({
+      task: "off mode local",
+      mode: "light",
+      repository: repository.slug,
+      use_librarian: "auto",
+    });
+
+    expect(result.context_pack).toContain("Off mode local memory");
+    expect(() => readFileSync(tracePath, "utf-8")).toThrow();
+  });
+
   test("librarian always command failure is a clear error", async () => {
     await runMigrations();
     const repo = new MemoryRepository();
@@ -394,6 +428,60 @@ describe("project memory cards", () => {
         use_librarian: "always",
       }),
     ).rejects.toThrow("Librarian subagent");
+  });
+
+  test("librarian always uses live command output and receives JSON input", async () => {
+    if (!dir) throw new Error("missing temp dir");
+    await runMigrations();
+    const repo = new MemoryRepository();
+    const repository = await ensureRepo(repo, "librarian-live-command-repo");
+    await createMemory(repo, repository.id, "Live command candidate memory", {
+      memoryType: "reference",
+      cardType: "architecture",
+    });
+
+    const tracePath = join(dir, "librarian-input.json");
+    const commandPath = join(dir, "librarian-command.mjs");
+    writeFileSync(
+      commandPath,
+      `import { writeFileSync } from "node:fs";
+
+const tracePath = process.argv[2];
+let input = "";
+process.stdin.setEncoding("utf-8");
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  writeFileSync(tracePath, input);
+  process.stdout.write(JSON.stringify({
+    sections: { "Librarian": ["Live librarian memory pack"] },
+    used_memory_ids: [],
+    confidence: 0.98,
+    missing_info: []
+  }));
+});
+`,
+    );
+    process.env["LOCAL_MEMORY_LIBRARIAN_MODE"] = "always";
+    process.env["LOCAL_MEMORY_LIBRARIAN_CMD"] =
+      `${shellQuote(process.execPath)} ${shellQuote(commandPath)} ${shellQuote(tracePath)}`;
+
+    const result = await new MemoryService({ reranker: new TestReranker() }).prepareContext({
+      task: "architecture migration",
+      mode: "deep",
+      repository: repository.slug,
+      use_librarian: "always",
+    });
+
+    expect(result.context_pack).toContain("Live librarian memory pack");
+    expect(result.confidence).toBe(0.98);
+    const payload = JSON.parse(readFileSync(tracePath, "utf-8")) as {
+      task: string;
+      mode: string;
+      candidates: { text: string }[];
+    };
+    expect(payload.task).toBe("architecture migration");
+    expect(payload.mode).toBe("deep");
+    expect(payload.candidates.some((candidate) => candidate.text.includes("Live command candidate memory"))).toBe(true);
   });
 
   test("commit_task writes durable cards once", async () => {
@@ -416,6 +504,29 @@ describe("project memory cards", () => {
     const memory = await new MemoryRepository().findById(first.written_memory_ids[0] ?? "");
     expect(memory?.memory_type).toBe("decision");
     expect(memory?.card_type).toBe("decision");
+  });
+
+  test("commit_task reports merged cards without duplicate written ids", async () => {
+    await runMigrations();
+    const service = new MemoryService();
+    const first = await service.commitTask({
+      task_summary: "Implement project memory",
+      decisions: ["Use project memory cards for task context"],
+    });
+    const firstId = first.written_memory_ids[0];
+    if (!firstId) throw new Error("missing first memory id");
+
+    const dedup = new DedupService();
+    dedup.findDuplicates = async () => ({ action: "merge", existing_id: firstId, similarity: 0.99 });
+    const mergeService = new MemoryService({ dedup });
+    const merged = await mergeService.commitTask({
+      task_summary: "Implement project memory",
+      decisions: ["Use compact project memory cards for task context"],
+    });
+
+    expect(merged.created).toBe(0);
+    expect(merged.skipped_duplicates).toBe(1);
+    expect(merged.written_memory_ids).toEqual([firstId]);
   });
 
   test("correct_memory changes status without changing the memory id", async () => {

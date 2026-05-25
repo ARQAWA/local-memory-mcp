@@ -2,9 +2,9 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
 const appRoot = process.cwd();
 const dbPath = process.env.LOCAL_MEMORY_DB_PATH ?? join(homedir(), ".local", "share", "local-memory-mcp", "local-memory.sqlite3");
@@ -89,18 +89,25 @@ function checkModelPath() {
   ok(`model path ${modelPath}`);
 }
 
-async function checkRerank() {
-  const modulePath = pathToFileURL(join(appRoot, "dist", "services", "reranker.service.js")).href;
-  const { JinaRerankerService } = await import(modulePath);
-  const reranker = new JinaRerankerService({ appRoot, pythonPath: python, modelPath });
-  try {
-    await reranker.start();
-    const results = await reranker.healthCheck();
-    if (results.length < 2) failReranker("sample rerank returned too few results");
-    ok(`sample rerank top=${results[0].id} score=${results[0].score.toFixed(4)}`);
-  } finally {
-    await reranker.close();
+async function checkMemoryd() {
+  const modulePath = pathToFileURL(join(appRoot, "dist", "memoryd", "client.js")).href;
+  const { MemorydProxyClient, ensureMemorydRunning } = await import(modulePath);
+  const status = await ensureMemorydRunning();
+  if (!status.jina_ready) failReranker("memoryd reports Jina worker is not ready");
+  if (!status.jina_worker_pid) failReranker("memoryd did not report a Jina worker pid");
+  const client = new MemorydProxyClient();
+  const doctorStatus = await client.doctorStatus();
+  if (doctorStatus.pid !== status.pid) fail("doctor/status returned a different memoryd pid");
+  if (doctorStatus.jina_worker_pid !== status.jina_worker_pid) {
+    fail("doctor/status returned a different Jina worker pid");
   }
+  for (const path of [status.socket_path, status.pid_path, status.log_path]) {
+    if (!existsSync(path)) fail(`memoryd state file missing: ${path}`);
+  }
+  ok(`memoryd pid ${status.pid}`);
+  ok(`Jina worker pid ${status.jina_worker_pid}`);
+  ok(`memoryd socket ${status.socket_path}`);
+  ok(`memoryd log ${status.log_path}`);
 }
 
 checkNode();
@@ -109,5 +116,5 @@ checkBuild();
 checkDbAndMigrations();
 checkMacAndPython();
 checkModelPath();
-await checkRerank();
+await checkMemoryd();
 ok("doctor passed");
