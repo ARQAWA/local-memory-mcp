@@ -54,7 +54,7 @@ describe("proxy-only contract", () => {
     expect(index).toContain("MemorydProxyClient");
     expect(index).toContain("memoryd");
     expect(index).not.toContain("MemoryService");
-    expect(index).not.toContain("JinaRerankerService");
+    expect(index).not.toContain("LlamaCppRerankerService");
     expect(index).not.toContain("runMigrations");
     expect(index).not.toContain("express");
     expect(index).not.toContain("helmet");

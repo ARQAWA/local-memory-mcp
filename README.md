@@ -20,9 +20,10 @@ This README is for humans. Agent behavior is defined by
   `repository_mode=all`.
 - The runtime surface is MCP stdio proxy plus one local `memoryd` backend.
 - MCP stdio processes are proxy connectors only.
-- `memoryd` is the only process that opens SQLite, retrieval runtime, and Jina.
+- `memoryd` is the only process that opens SQLite, retrieval runtime, and the
+  Qwen3 GGUF llama.cpp reranker.
 - Multiple clients and MCP sessions share the same `memoryd`.
-- Topology: many MCP sessions -> one `memoryd` -> one Jina worker.
+- Topology: many MCP sessions -> one `memoryd` -> one Qwen3 llama.cpp runtime.
 - There is no per-MCP model load.
 - Public MCP tools are only `prepare_context`, `commit_task`, and
   `correct_memory`.
@@ -87,22 +88,29 @@ context packs and write durable task learnings with `commit_task`.
 
 ## Retrieval
 
-Retrieval requires `jinaai/jina-reranker-v3-mlx` on macOS Apple Silicon.
-`memoryd` starts exactly one local Python/MLX worker as a child process and
-keeps the model ready. MCP stdio processes never start Jina. There is no
-fallback or none mode. If the venv, MLX import, model path, or worker is not
-ready, `memoryd` startup and `pnpm run doctor` fail with a clear error.
+Retrieval requires Qwen3-Reranker-0.6B GGUF Q4_K_M through `llama.cpp`.
+`memoryd` starts exactly one local `llama-server` child process and keeps the
+model ready. MCP stdio processes never start the model runtime. There is no
+fallback or none mode. If `llama-server`, the GGUF model file, or the sample
+rerank check is not ready, `memoryd` startup and `pnpm run doctor` fail with a
+clear error.
+
+Default model path:
+
+```bash
+$HOME/.local/share/local-memory-mcp/models/qwen3-reranker-0.6b-gguf/Qwen3-Reranker-0.6B.Q4_K_M.gguf
+```
 
 `prepare_context(light)` uses FTS, semantic search, tags, and entities to
-collect up to 30 candidates. It reranks candidates with Jina MLX, keeps the top
+collect up to 30 candidates. It reranks candidates with Qwen3 GGUF, keeps the top
 8-10 after status-aware ordering and deduplication, and targets a 900-token
 pack by default.
 
 `prepare_context(deep)` classifies the task, extracts query terms, uses FTS,
 semantic search, tags/entities, type-prior search, entity/relation expansion
-depth 1, status filtering, mandatory Jina MLX reranking, and MMR-style
-deduplication. It collects up to 100-150 candidates and targets a 3500-token
-pack by default.
+depth 1, status filtering, mandatory Qwen3 GGUF reranking, and MMR-style
+deduplication. It collects up to 40-60 candidates, or at most 80 for high-risk
+deep tasks, and targets a 3500-token pack by default.
 
 `prepare_context(auto)` uses deep mode for auth, security, billing, migration,
 architecture, debugging, and refactoring work. It starts light for smaller
@@ -172,6 +180,7 @@ The installer must:
 - run `pnpm run smoke:mcp-session`;
 - run `pnpm run smoke:librarian-modes`;
 - run `pnpm run smoke:singleton`;
+- run `pnpm run smoke:reranker-memory`;
 - create or reuse the local SQLite database file;
 - link `local-memory-mcp` into `$HOME/.local/bin`;
 - verify a fresh MCP session exposes only `prepare_context`, `commit_task`,
@@ -183,6 +192,7 @@ Useful live smoke:
 pnpm run smoke:mcp-session
 pnpm run smoke:librarian-modes
 pnpm run smoke:singleton
+pnpm run smoke:reranker-memory
 ```
 
 The smoke starts a fresh stdio MCP session, verifies the public tool list, runs
@@ -195,4 +205,4 @@ The librarian mode smoke verifies:
 - `always`: command failure makes `prepare_context` fail.
 
 The singleton smoke starts three MCP stdio sessions and proves they share one
-`memoryd` process and one Jina worker.
+`memoryd` process and one Qwen3 llama.cpp runtime.

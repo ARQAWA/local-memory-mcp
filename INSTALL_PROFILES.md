@@ -6,9 +6,10 @@ Architecture:
 
 - MCP stdio is a proxy connector only.
 - `memoryd` is the singleton backend for one user and host.
-- SQLite, retrieval, and Jina MLX live only inside `memoryd`.
+- SQLite, retrieval, and the Qwen3 GGUF llama.cpp reranker live only inside
+  `memoryd`.
 - Many clients and MCP sessions share one backend:
-  many MCP sessions -> one `memoryd` -> one Jina worker.
+  many MCP sessions -> one `memoryd` -> one Qwen3 llama.cpp runtime.
 - Public MCP tools are only `prepare_context`, `commit_task`, and
   `correct_memory`.
 - Backend-boundary command hooks are internal dev/debug support only. They are
@@ -31,10 +32,10 @@ Required environment:
 
 - `OPENROUTER_API_KEY` for embeddings.
 - `LOCAL_MEMORY_DB_PATH` only when the default DB path must change.
-- `LOCAL_MEMORY_RERANKER_MODEL_PATH` only when the model is not in the default
-  path.
-- `LOCAL_MEMORY_RERANKER_PYTHON` only when the Python venv is not in the
-  default app path.
+- `LOCAL_MEMORY_RERANKER_MODEL_PATH` only when the GGUF model is not in the
+  default path.
+- `LOCAL_MEMORY_LLAMA_SERVER_BIN` only when `llama-server` is not on the
+  default path.
 
 Do not put secrets in project files. Prefer user/global environment config.
 
@@ -95,6 +96,7 @@ codex mcp list
 pnpm run smoke:mcp-session
 pnpm run smoke:librarian-modes
 pnpm run smoke:singleton
+pnpm run smoke:reranker-memory
 ```
 
 Then start a new Codex session and verify:
@@ -140,6 +142,7 @@ claude mcp list
 pnpm run smoke:mcp-session
 pnpm run smoke:librarian-modes
 pnpm run smoke:singleton
+pnpm run smoke:reranker-memory
 ```
 
 Expected main-agent route:
@@ -191,6 +194,7 @@ cursor-agent mcp list-tools local-memory
 pnpm run smoke:mcp-session
 pnpm run smoke:librarian-modes
 pnpm run smoke:singleton
+pnpm run smoke:reranker-memory
 ```
 
 Expected main-agent route:

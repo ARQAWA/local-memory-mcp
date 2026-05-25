@@ -255,7 +255,7 @@ export async function ensureMemorydRunning(paths = getMemorydPaths()): Promise<M
   ensureMemorydStateDir(paths);
   const existing = await probeHealth(paths);
   if (existing) {
-    appendMemorydLog("reused", { pid: existing.pid, jina_worker_pid: existing.jina_worker_pid }, paths);
+    appendMemorydLog("reused", { pid: existing.pid, qwen_runtime_pid: existing.qwen_runtime_pid }, paths);
     return existing;
   }
 
@@ -263,7 +263,7 @@ export async function ensureMemorydRunning(paths = getMemorydPaths()): Promise<M
   try {
     const afterLock = await probeHealth(paths);
     if (afterLock) {
-      appendMemorydLog("reused", { pid: afterLock.pid, jina_worker_pid: afterLock.jina_worker_pid }, paths);
+      appendMemorydLog("reused", { pid: afterLock.pid, qwen_runtime_pid: afterLock.qwen_runtime_pid }, paths);
       return afterLock;
     }
 

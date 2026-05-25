@@ -23,7 +23,7 @@ export function registerProjectMemoryTools(server: McpServer, service: ProjectMe
     "prepare_context",
     {
       description:
-        "Prepare a compact project-memory context pack for the next task. Light and deep retrieval both use the mandatory local Jina MLX reranker, singleton inside memoryd; deep mode can optionally use a librarian subagent after reranking.",
+        "Prepare a compact project-memory context pack for the next task. Light and deep retrieval both use the mandatory local Qwen3 GGUF llama.cpp reranker, singleton inside memoryd; deep mode can optionally use a librarian subagent after reranking.",
       inputSchema: {
         task: z.string().min(1).describe("Task or question to prepare context for"),
         mode: z.enum(["auto", "light", "deep"]).default("auto"),

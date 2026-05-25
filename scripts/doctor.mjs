@@ -1,17 +1,26 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
 const appRoot = process.cwd();
-const dbPath = process.env.LOCAL_MEMORY_DB_PATH ?? join(homedir(), ".local", "share", "local-memory-mcp", "local-memory.sqlite3");
+const dbPath =
+  process.env.LOCAL_MEMORY_DB_PATH ?? join(homedir(), ".local", "share", "local-memory-mcp", "local-memory.sqlite3");
 const modelPath =
   process.env.LOCAL_MEMORY_RERANKER_MODEL_PATH ??
-  join(homedir(), ".local", "share", "local-memory-mcp", "models", "jina-reranker-v3-mlx");
-const python = process.env.LOCAL_MEMORY_RERANKER_PYTHON ?? join(appRoot, ".venv", "bin", "python");
+  join(
+    homedir(),
+    ".local",
+    "share",
+    "local-memory-mcp",
+    "models",
+    "qwen3-reranker-0.6b-gguf",
+    "Qwen3-Reranker-0.6B.Q4_K_M.gguf",
+  );
+const profilePath = join(homedir(), ".local", "share", "local-memory-mcp", "reranker-profile.json");
 const distIndex = join(appRoot, "dist", "index.js");
 const distMigrate = join(appRoot, "dist", "db", "migrate.js");
 const migrationsDir = join(appRoot, "dist", "db", "migrations");
@@ -22,7 +31,7 @@ function fail(message) {
 }
 
 function failReranker(message) {
-  fail(`memory is not operational without Jina MLX reranker: ${message}`);
+  fail(`memory is not operational without Qwen3 GGUF reranker: ${message}`);
 }
 
 function ok(message) {
@@ -72,40 +81,53 @@ function checkDbAndMigrations() {
   }
 }
 
-function checkMacAndPython() {
-  if (process.platform !== "darwin" || process.arch !== "arm64") {
-    failReranker(`requires macOS Apple Silicon; got ${process.platform}/${process.arch}`);
-  }
-  if (!existsSync(python)) failReranker(`Python venv not found at ${python}; run pnpm run setup:reranker`);
-  commandOk(python, ["-c", "import mlx, mlx_lm, safetensors, numpy"]);
-  ok("macOS Apple Silicon and MLX Python imports");
+function readProfile() {
+  if (!existsSync(profilePath)) failReranker(`profile missing at ${profilePath}; run pnpm run setup:reranker`);
+  return JSON.parse(readFileSync(profilePath, "utf-8"));
 }
 
-function checkModelPath() {
-  for (const file of ["rerank.py", "projector.safetensors", "config.json", "tokenizer.json"]) {
-    const path = join(modelPath, file);
-    if (!existsSync(path)) failReranker(`model file missing: ${path}; run pnpm run setup:reranker`);
+function checkModelAndRuntime(profile) {
+  const llamaServer = process.env.LOCAL_MEMORY_LLAMA_SERVER_BIN ?? profile.llama_server_path;
+  if (typeof llamaServer !== "string" || llamaServer.length === 0) {
+    failReranker("llama-server path missing from profile; run pnpm run setup:reranker");
   }
-  ok(`model path ${modelPath}`);
+  commandOk(llamaServer, ["--version"]);
+  if (!existsSync(modelPath)) failReranker(`model file missing: ${modelPath}; run pnpm run setup:reranker`);
+  const header = readFileSync(modelPath).subarray(0, 4).toString("utf-8");
+  if (header !== "GGUF") failReranker(`model file is not GGUF: ${modelPath}`);
+  ok(`llama.cpp runtime ${llamaServer}`);
+  ok(`Qwen3 GGUF model path ${modelPath}`);
 }
 
 async function checkMemoryd() {
   const modulePath = pathToFileURL(join(appRoot, "dist", "memoryd", "client.js")).href;
   const { MemorydProxyClient, ensureMemorydRunning } = await import(modulePath);
   const status = await ensureMemorydRunning();
-  if (!status.jina_ready) failReranker("memoryd reports Jina worker is not ready");
-  if (!status.jina_worker_pid) failReranker("memoryd did not report a Jina worker pid");
+  if (status.reranker_backend !== "qwen3-gguf-llama.cpp") {
+    failReranker(`unexpected reranker backend: ${status.reranker_backend}`);
+  }
+  if (!status.qwen_ready) failReranker("memoryd reports Qwen3 reranker is not ready");
+  if (!status.qwen_runtime_pid) failReranker("memoryd did not report a llama.cpp runtime pid");
   const client = new MemorydProxyClient();
   const doctorStatus = await client.doctorStatus();
   if (doctorStatus.pid !== status.pid) fail("doctor/status returned a different memoryd pid");
-  if (doctorStatus.jina_worker_pid !== status.jina_worker_pid) {
-    fail("doctor/status returned a different Jina worker pid");
+  if (doctorStatus.qwen_runtime_pid !== status.qwen_runtime_pid) {
+    fail("doctor/status returned a different llama.cpp runtime pid");
   }
+  const sample = await client.prepareContext({
+    task: "doctor sample rerank for Qwen3 GGUF llama.cpp runtime",
+    mode: "light",
+    token_budget: 300,
+    use_librarian: "never",
+  });
+  if (typeof sample.context_pack !== "string") failReranker("sample rerank returned invalid context pack");
   for (const path of [status.socket_path, status.pid_path, status.log_path]) {
     if (!existsSync(path)) fail(`memoryd state file missing: ${path}`);
   }
   ok(`memoryd pid ${status.pid}`);
-  ok(`Jina worker pid ${status.jina_worker_pid}`);
+  ok(`Qwen3 llama.cpp runtime pid ${status.qwen_runtime_pid}`);
+  ok(`reranker endpoint ${status.reranker_endpoint ?? "not reported"}`);
+  ok(`sample rerank mode ${sample.mode_used}`);
   ok(`memoryd socket ${status.socket_path}`);
   ok(`memoryd log ${status.log_path}`);
 }
@@ -114,7 +136,7 @@ checkNode();
 checkPnpm();
 checkBuild();
 checkDbAndMigrations();
-checkMacAndPython();
-checkModelPath();
+const profile = readProfile();
+checkModelAndRuntime(profile);
 await checkMemoryd();
 ok("doctor passed");

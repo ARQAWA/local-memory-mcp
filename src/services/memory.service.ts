@@ -36,7 +36,7 @@ import { getEmbeddingProvider } from "./embedding.service.js";
 import { EntityExtractionService } from "./entity-extraction.service.js";
 import { LibrarianRunner } from "./librarian.service.js";
 import { logger } from "./logger.js";
-import type { Reranker, RerankCandidateInput } from "./reranker.service.js";
+import type { Reranker, RerankCandidateInput, RerankResult } from "./reranker.service.js";
 import { RERANKER_OPERATIONAL_ERROR } from "./reranker.service.js";
 import { compositeScore, generateSummary, scoreImportance, tokenBudget } from "./scoring.service.js";
 import type {
@@ -258,8 +258,9 @@ export class MemoryService {
       }
     }
 
-    candidates = await this.rerankProjectCandidates(this.contextQuery(input), candidates);
-    candidates = this.selectProjectCandidates(candidates, modeUsed);
+    const highRisk = this.isHighRiskTask(input.task);
+    candidates = await this.rerankProjectCandidates(this.contextQuery(input), candidates, modeUsed);
+    candidates = this.selectProjectCandidates(candidates, modeUsed, highRisk);
 
     const budget = input.token_budget ?? (modeUsed === "deep" ? 3500 : 900);
     const fallback = this.buildContextPack(candidates, budget, modeUsed);
@@ -1020,7 +1021,8 @@ export class MemoryService {
     const query = this.contextQuery(input);
     const filters = { repository_id: repositoryId };
     const embedding = await this.generateEmbedding(query, "query");
-    const searchLimit = mode === "deep" ? 80 : 30;
+    const highRisk = this.isHighRiskTask(input.task);
+    const searchLimit = mode === "deep" ? (highRisk ? 80 : 60) : 30;
     const fts = await this.memories.searchFts(query, filters, searchLimit);
     const semantic = embedding ? await this.memories.searchSemantic(embedding, filters, searchLimit) : [];
     const entity = await this.memories.searchByTagsEntitiesAndText(query, filters, searchLimit);
@@ -1031,11 +1033,11 @@ export class MemoryService {
     this.mergeCandidates(candidateMap, entity, "entity");
 
     if (mode === "deep") {
-      const typePrior = await this.memories.listByCardTypes(this.typePriorsForTask(input.task), filters, 50);
+      const typePrior = await this.memories.listByCardTypes(this.typePriorsForTask(input.task), filters, 40);
       this.mergeCandidates(candidateMap, typePrior, "type");
       const seedIds = [...candidateMap.values()]
         .sort((a, b) => Math.max(b.fts, b.vector, b.entity, b.type) - Math.max(a.fts, a.vector, a.entity, a.type))
-        .slice(0, 20)
+        .slice(0, highRisk ? 16 : 12)
         .map((candidate) => String(candidate.memory.id));
       const relations = await this.relations.findByEntries(seedIds, repositoryId, { activeOnly: false });
       const neighborIds = relations
@@ -1052,7 +1054,7 @@ export class MemoryService {
       }
     }
 
-    return { candidates: this.scoreProjectCandidates([...candidateMap.values()], mode) };
+    return { candidates: this.scoreProjectCandidates([...candidateMap.values()], mode, highRisk) };
   }
 
   private mergeCandidates(
@@ -1089,7 +1091,11 @@ export class MemoryService {
     target.set(memory.id, current);
   }
 
-  private scoreProjectCandidates(candidates: ProjectCandidate[], mode: "light" | "deep"): ProjectCandidate[] {
+  private scoreProjectCandidates(
+    candidates: ProjectCandidate[],
+    mode: "light" | "deep",
+    highRisk: boolean,
+  ): ProjectCandidate[] {
     const maxFts = Math.max(0.0001, ...candidates.map((candidate) => candidate.fts));
     const maxVector = Math.max(0.0001, ...candidates.map((candidate) => candidate.vector));
     const maxEntity = Math.max(0.0001, ...candidates.map((candidate) => candidate.entity));
@@ -1107,7 +1113,7 @@ export class MemoryService {
         return { ...candidate, score: Math.max(0, base + this.statusModifier(candidate.memory.status)) };
       })
       .sort((a, b) => b.score - a.score);
-    return scored.slice(0, mode === "deep" ? 150 : 30);
+    return scored.slice(0, mode === "deep" ? (highRisk ? 80 : 60) : 30);
   }
 
   private buildContextPack(
@@ -1162,19 +1168,26 @@ export class MemoryService {
     };
   }
 
-  private async rerankProjectCandidates(query: string, candidates: ProjectCandidate[]): Promise<ProjectCandidate[]> {
+  private async rerankProjectCandidates(
+    query: string,
+    candidates: ProjectCandidate[],
+    mode: "light" | "deep",
+  ): Promise<ProjectCandidate[]> {
     if (!this.reranker) {
       throw new ExternalServiceError(
-        "Jina MLX reranker",
+        "Qwen3 GGUF reranker via llama.cpp",
         `${RERANKER_OPERATIONAL_ERROR}: backend started without worker`,
       );
     }
     if (candidates.length === 0) return [];
     const rerankInput: RerankCandidateInput[] = candidates.map((candidate) => ({
       id: candidate.memory.id,
-      text: this.rerankText(candidate.memory),
+      text: this.rerankText(candidate.memory, mode),
     }));
-    const results = await this.reranker.rerank(query, rerankInput);
+    const results: RerankResult[] = [];
+    for (let index = 0; index < rerankInput.length; index += 8) {
+      results.push(...(await this.reranker.rerank(query, rerankInput.slice(index, index + 8))));
+    }
     const byId = new Map(candidates.map((candidate) => [String(candidate.memory.id), candidate]));
     const ordered: ProjectCandidate[] = [];
     for (const result of results) {
@@ -1221,12 +1234,14 @@ export class MemoryService {
 
   private modeForTask(task: string, requested: PrepareMode): "light" | "deep" {
     if (requested === "light" || requested === "deep") return requested;
-    if (
-      /(auth|security|billing|migration|architecture|debug|refactor|безопас|миграц|архитект|рефактор|отлад)/i.test(task)
-    ) {
-      return "deep";
-    }
+    if (this.isHighRiskTask(task)) return "deep";
     return "light";
+  }
+
+  private isHighRiskTask(task: string): boolean {
+    return /(auth|security|billing|migration|architecture|debug|refactor|безопас|миграц|архитект|рефактор|отлад)/i.test(
+      task,
+    );
   }
 
   private typePriorsForTask(task: string): CardType[] {
@@ -1236,14 +1251,22 @@ export class MemoryService {
     return base;
   }
 
-  private selectProjectCandidates(candidates: ProjectCandidate[], mode: "light" | "deep"): ProjectCandidate[] {
+  private selectProjectCandidates(
+    candidates: ProjectCandidate[],
+    mode: "light" | "deep",
+    highRisk: boolean,
+  ): ProjectCandidate[] {
     const sorted = this.sortByStatusAndScore(candidates);
     if (mode === "light") return this.dedupProjectCandidates(sorted).slice(0, 10);
-    return this.mmrDedupCandidates(sorted, 80);
+    return this.mmrDedupCandidates(sorted, highRisk ? 80 : 60);
   }
 
   private scoreWithRerank(candidate: ProjectCandidate, rerankScore: number): number {
-    const normalizedRerank = Number.isFinite(rerankScore) ? Math.max(0, Math.min(1, (rerankScore + 1) / 2)) : 0;
+    const normalizedRerank = !Number.isFinite(rerankScore)
+      ? 0
+      : rerankScore >= 0 && rerankScore <= 1
+        ? rerankScore
+        : Math.max(0, Math.min(1, 1 / (1 + Math.exp(-rerankScore))));
     return candidate.score * 0.35 + normalizedRerank * 0.65;
   }
 
@@ -1373,8 +1396,8 @@ export class MemoryService {
     return Math.min(1, Math.exp((-Math.LN2 * ageDays) / 45));
   }
 
-  private rerankText(memory: Memory): string {
-    return `${memory.summary}\n\n${memory.content}`.slice(0, 3_000);
+  private rerankText(memory: Memory, mode: "light" | "deep"): string {
+    return `${memory.summary}\n\n${memory.content}`.slice(0, mode === "deep" ? 1_200 : 1_000);
   }
 
   private commandCandidates(candidates: ProjectCandidate[]): RerankCandidateInput[] {

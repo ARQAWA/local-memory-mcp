@@ -357,7 +357,7 @@ describe("project memory cards", () => {
         mode: "light",
         repository: repository.slug,
       }),
-    ).rejects.toThrow("memory is not operational without Jina MLX reranker");
+    ).rejects.toThrow("memory is not operational without Qwen3 GGUF reranker");
   });
 
   test("librarian auto command failures fall back to local prepare_context", async () => {

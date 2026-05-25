@@ -10,7 +10,7 @@ export interface McpServerWithSampling {
 
 const SERVER_INSTRUCTIONS = `Local Memory MCP is the agent's proxy to a local persistent memory system.
 
-This MCP stdio process is a proxy only. It connects to the singleton local memoryd backend. SQLite, retrieval runtime, and the Jina MLX worker live only inside memoryd, and multiple MCP sessions share that backend.
+This MCP stdio process is a proxy only. It connects to the singleton local memoryd backend. SQLite, retrieval runtime, and the Qwen3 GGUF llama.cpp reranker live only inside memoryd, and multiple MCP sessions share that backend.
 
 Memory is global on this host but partitioned by repository. Normal reads and writes use the current project, which can be a Git repository or a plain local folder.
 
@@ -22,7 +22,7 @@ Do not store secrets, tokens, passwords, private keys, credentials, or private a
 
 Project memory cards use card_type and status. Status is more important than score: wrong cards are dropped; deprecated and superseded cards appear only in the Legacy section; candidate and needs_review are not current truth.
 
-Public tools are intentionally limited to prepare_context, commit_task, and correct_memory. Retrieval requires the single local Jina MLX reranker inside memoryd; memory is not operational without it.`;
+Public tools are intentionally limited to prepare_context, commit_task, and correct_memory. Retrieval requires the single local Qwen3 GGUF llama.cpp reranker inside memoryd; memory is not operational without it.`;
 
 export function createMcpServer(service: ProjectMemoryBackend, version = "3.5.0"): McpServerWithSampling {
   const server = new McpServer(

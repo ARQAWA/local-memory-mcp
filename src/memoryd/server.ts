@@ -8,7 +8,7 @@ import { LocalMemoryError } from "../errors.js";
 import { MemoryService } from "../services/memory.service.js";
 import { EmbeddingQueue } from "../services/embedding-queue.js";
 import { logger } from "../services/logger.js";
-import { JinaRerankerService } from "../services/reranker.service.js";
+import { LlamaCppRerankerService } from "../services/reranker.service.js";
 import type { CommitTaskInput, CorrectMemoryInput, PrepareContextInput } from "../tools/project-memory-backend.js";
 import type { MemorydRequest, MemorydResponse, MemorydStatus } from "./protocol.js";
 import { appendMemorydLog, ensureMemorydStateDir, getMemorydPaths } from "./paths.js";
@@ -16,7 +16,7 @@ import { appendMemorydLog, ensureMemorydStateDir, getMemorydPaths } from "./path
 interface MemorydRuntime {
   service: MemoryService;
   embeddingQueue: EmbeddingQueue | undefined;
-  reranker: JinaRerankerService;
+  reranker: LlamaCppRerankerService;
   startedAt: number;
 }
 
@@ -80,7 +80,7 @@ function serializeError(id: string, err: unknown): MemorydResponse {
 async function createRuntime(): Promise<MemorydRuntime> {
   const config = loadConfig();
   await runMigrations();
-  const reranker = new JinaRerankerService();
+  const reranker = new LlamaCppRerankerService();
   await reranker.start();
 
   let embeddingQueue: EmbeddingQueue | undefined;
@@ -113,9 +113,14 @@ function status(runtime: MemorydRuntime): MemorydStatus {
     database_path: loadConfig().databasePath,
     app_root: runtime.reranker.appRoot,
     uptime_seconds: Math.max(0, Math.round((Date.now() - runtime.startedAt) / 1000)),
-    jina_ready: rerankerStatus.ready,
-    jina_worker_pid: rerankerStatus.worker_pid,
-    jina_model_path: rerankerStatus.model_path,
+    reranker_backend: rerankerStatus.backend,
+    qwen_ready: rerankerStatus.ready,
+    qwen_runtime_pid: rerankerStatus.runtime_pid,
+    qwen_model_path: rerankerStatus.model_path,
+    llama_server_path: rerankerStatus.llama_server_path,
+    reranker_endpoint: rerankerStatus.endpoint,
+    reranker_idle_timeout_ms: rerankerStatus.idle_timeout_ms,
+    reranker_last_used_at: rerankerStatus.last_used_at,
   };
 }
 
@@ -222,7 +227,7 @@ export async function startMemorydServer(): Promise<void> {
     logger.info("local-memory memoryd running", {
       pid: process.pid,
       socket: paths.socketPath,
-      jina_worker_pid: runtime.reranker.status().worker_pid,
+      qwen_runtime_pid: runtime.reranker.status().runtime_pid,
     });
   } catch (err: unknown) {
     appendMemorydLog("error", { action: "start memoryd", error: messageText(err) }, paths);

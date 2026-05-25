@@ -98,7 +98,7 @@ async function prepareFromSession(session, index, stateDir) {
   return {
     index,
     memoryd_pid: status.pid,
-    jina_worker_pid: status.jina_worker_pid,
+    qwen_runtime_pid: status.qwen_runtime_pid,
     mode_used: result.mode_used,
   };
 }
@@ -113,16 +113,16 @@ async function main() {
       sessions.map((session, index) => prepareFromSession(session, index + 1, stateDir)),
     );
     const memorydPids = [...new Set(results.map((result) => result.memoryd_pid))];
-    const workerPids = [...new Set(results.map((result) => result.jina_worker_pid).filter(Boolean))];
+    const runtimePids = [...new Set(results.map((result) => result.qwen_runtime_pid).filter(Boolean))];
     if (memorydPids.length !== 1) throw new Error(`expected 1 memoryd pid, got ${memorydPids.join(", ")}`);
-    if (workerPids.length !== 1) throw new Error(`expected 1 Jina worker pid, got ${workerPids.join(", ")}`);
+    if (runtimePids.length !== 1) throw new Error(`expected 1 llama.cpp runtime pid, got ${runtimePids.join(", ")}`);
     console.log(
       JSON.stringify({
         ok: true,
         sessions: results.length,
         memoryd_pid: memorydPids[0],
-        jina_worker_pid: workerPids[0],
-        route: "3 MCP stdio sessions -> 1 memoryd -> 1 Jina worker",
+        qwen_runtime_pid: runtimePids[0],
+        route: "3 MCP stdio sessions -> 1 memoryd -> 1 Qwen3 llama.cpp runtime",
       }),
     );
   } catch (err) {

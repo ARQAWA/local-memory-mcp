@@ -16,6 +16,7 @@
     "smoke:librarian-modes": "node scripts/smoke-librarian-modes.mjs",
     "smoke:mcp-session": "node scripts/smoke-mcp-session.mjs",
     "smoke:singleton": "node scripts/smoke-singleton.mjs",
+    "smoke:reranker-memory": "node scripts/smoke-reranker-memory.mjs",
     "migrate": "tsx src/db/migrate.ts",
     "proof:search": "tsx scripts/search-performance-proof.ts",
     "typecheck": "tsc --noEmit",

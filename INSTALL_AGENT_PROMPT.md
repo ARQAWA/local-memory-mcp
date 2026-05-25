@@ -29,10 +29,11 @@ Memory model:
 - Do not create a per-repository database.
 - MCP stdio is a proxy connector only.
 - `memoryd` is the singleton backend for this user and host.
-- Only `memoryd` opens SQLite, retrieval runtime, and Jina.
+- Only `memoryd` opens SQLite, retrieval runtime, and the Qwen3 GGUF
+  llama.cpp reranker.
 - Multiple clients and MCP sessions share one `memoryd`.
-- Topology: many MCP sessions -> one `memoryd` -> one Jina worker.
-- There is no per-MCP Jina/model load.
+- Topology: many MCP sessions -> one `memoryd` -> one Qwen3 llama.cpp runtime.
+- There is no per-MCP model load.
 - Public MCP tools are only `prepare_context`, `commit_task`, and
   `correct_memory`.
 - Backend-boundary command hooks are internal dev/debug support only. They are
@@ -61,11 +62,13 @@ Rules:
   rules. Install or replace only the managed Local Memory MCP contract block.
 - Use `LOCAL_MEMORY_DB_PATH` only when the default database path must change.
 - Use `OPENROUTER_API_KEY` for embeddings.
-- The Jina MLX reranker is mandatory. Do not install a fallback or none mode.
-- `pnpm run setup:reranker` creates the local `.venv`, installs MLX Python
-  dependencies, and downloads `jinaai/jina-reranker-v3-mlx`.
+- The Qwen3 GGUF llama.cpp reranker is mandatory. Do not install a fallback or
+  none mode.
+- `pnpm run setup:reranker` finds or installs `llama.cpp` / `llama-server`,
+  downloads `Qwen3-Reranker-0.6B.Q4_K_M.gguf`, verifies the GGUF file, runs a
+  sample rerank, and saves the local reranker profile.
 - Use `LOCAL_MEMORY_RERANKER_MODEL_PATH`,
-  `LOCAL_MEMORY_RERANKER_PYTHON`, and
+  `LOCAL_MEMORY_LLAMA_SERVER_BIN`, and
   `LOCAL_MEMORY_RERANKER_TIMEOUT_MS` only when defaults must change.
 - Do not configure backend command hooks as normal client subagents.
 - Do not print secret values.
@@ -106,16 +109,17 @@ Steps:
 14. Run `pnpm run smoke:mcp-session`.
 15. Run `pnpm run smoke:librarian-modes`.
 16. Run `pnpm run smoke:singleton`.
-17. Link command wrappers into `$HOME/.local/bin`.
-18. Configure a global MCP server named `local-memory`.
+17. Run `pnpm run smoke:reranker-memory`.
+18. Link command wrappers into `$HOME/.local/bin`.
+19. Configure a global MCP server named `local-memory`.
     - For Codex, set `required = true` for `mcp_servers.local-memory`.
-19. Install the managed contract below into the host global rules.
+20. Install the managed contract below into the host global rules.
     - Replace only the managed `LOCAL_MEMORY_MCP_AGENT_CONTRACT` block.
     - Preserve unrelated rules and other managed blocks, including ARQAWA
       blocks.
-20. Configure native memory-librarian setup for the client profile when the
+21. Configure native memory-librarian setup for the client profile when the
     client supports native subagents.
-21. Start a fresh agent/MCP session and verify tool schemas and the expected
+22. Start a fresh agent/MCP session and verify tool schemas and the expected
     route: `prepare_context(auto)` -> work -> `prepare_context(light)` ->
     `commit_task`.
 
@@ -184,10 +188,12 @@ Install checks:
   `anchors_json`, `metadata_json`, and `supersedes_id` on `memories`.
 - Migration must create a SQLite backup before pending migrations.
 - `pnpm run doctor` must pass.
-- Doctor must verify macOS Apple Silicon, Python venv, MLX import, model path,
-  one `memoryd`, and one Jina worker inside `memoryd`.
+- Doctor must verify `llama-server`, Qwen3 GGUF model path, one `memoryd`, one
+  llama.cpp runtime inside `memoryd`, and a sample rerank result.
 - `pnpm run smoke:singleton` must prove 3 MCP stdio sessions -> 1 memoryd ->
-  1 Jina worker.
+  1 Qwen3 llama.cpp runtime.
+- `pnpm run smoke:reranker-memory` must prove the same singleton route and
+  fail a 7 GB memory regression.
 - The active build must expose MCP stdio proxy only.
 - `memoryd` must be the only backend process.
 - MCP schemas must expose only:
@@ -217,7 +223,9 @@ Install checks:
 - `pnpm run smoke:librarian-modes` verifies `off`, `auto`, and `always`
   internal librarian mode behavior.
 - `pnpm run smoke:singleton` verifies multiple MCP sessions share one
-  `memoryd` and one Jina worker.
+  `memoryd` and one Qwen3 llama.cpp runtime.
+- `pnpm run smoke:reranker-memory` verifies best-effort reranker RAM and idle
+  unload behavior.
 
 Managed contract:
 

@@ -35,7 +35,7 @@ describe("repository graph contract", () => {
     expect(prompt).toContain("runtime or active-install proof");
     expect(prompt).toContain("red-team pass");
     expect(prompt).toContain("Useful tools:");
-    expect(prompt).toContain("The Jina MLX reranker is mandatory");
+    expect(prompt).toContain("The Qwen3 GGUF llama.cpp reranker is mandatory");
     expect(prompt).toContain("pnpm run setup:reranker");
     expect(prompt).toContain("pnpm run doctor");
     expect(prompt).toContain("MCP schemas must expose only");
@@ -62,12 +62,12 @@ describe("repository graph contract", () => {
     expect(readme).toContain("commit_task");
     expect(readme).toContain("correct_memory");
     expect(readme).toContain("Raw memory tools are not public");
-    expect(readme).toContain("jinaai/jina-reranker-v3-mlx");
+    expect(readme).toContain("Qwen3-Reranker-0.6B.Q4_K_M.gguf");
     expect(readme).toContain("fallback or none mode");
     expect(readme).toContain("MCP stdio processes are proxy connectors only");
     expect(readme).toContain("memoryd");
     expect(readme).toContain("memoryd.sock");
-    expect(readme).toContain("many MCP sessions -> one `memoryd` -> one Jina worker");
+    expect(readme).toContain("many MCP sessions -> one `memoryd` -> one Qwen3 llama.cpp runtime");
     expect(readme).toContain("no per-MCP model load");
     expect(readme).toContain("pnpm run setup:reranker");
     expect(readme).toContain("pnpm run doctor");
@@ -133,7 +133,7 @@ describe("repository graph contract", () => {
     expect(server).toContain("commit_task");
     expect(server).toContain("correct_memory");
     expect(server).toContain("Public tools are intentionally limited");
-    expect(server).toContain("Jina MLX reranker");
+    expect(server).toContain("Qwen3 GGUF llama.cpp reranker");
     expect(server).not.toContain("get_active_context");
     expect(server).not.toContain("open_task_memory");
     expect(server).not.toContain("recall or get_context_for");
@@ -141,7 +141,7 @@ describe("repository graph contract", () => {
     expect(projectMemoryTools).toContain("prepare_context");
     expect(projectMemoryTools).toContain("commit_task");
     expect(projectMemoryTools).toContain("correct_memory");
-    expect(projectMemoryTools).toContain("mandatory local Jina MLX reranker");
+    expect(projectMemoryTools).toContain("mandatory local Qwen3 GGUF llama.cpp reranker");
     expect(toolsIndex).toContain("registerProjectMemoryTools");
     for (const banned of [
       "registerRecallTools",
@@ -182,7 +182,7 @@ describe("repository graph contract", () => {
     expect(prompt).toContain("prepare_context(auto)` -> work -> `prepare_context(light)` -> `commit_task");
     expect(prompt).toContain("MCP stdio is a proxy connector only");
     expect(prompt).toContain("memoryd.sock");
-    expect(prompt).toContain("many MCP sessions -> one `memoryd` -> one Jina worker");
+    expect(prompt).toContain("many MCP sessions -> one `memoryd` -> one Qwen3 llama.cpp runtime");
     expect(prompt).toContain("VACUUM INTO");
     expect(prompt).toContain("pnpm run smoke:singleton");
     expect(prompt).toContain("agent-initiated before the");
@@ -193,6 +193,7 @@ describe("repository graph contract", () => {
     expect(prompt).not.toContain("LOCAL_MEMORY_LIBRARIAN_MODE");
     expect(prompt).toContain("pnpm run smoke:mcp-session");
     expect(prompt).toContain("pnpm run smoke:librarian-modes");
+    expect(prompt).toContain("pnpm run smoke:reranker-memory");
   });
 
   test("install profiles cover supported clients and verification commands", () => {
@@ -223,6 +224,7 @@ describe("repository graph contract", () => {
     expect(profiles).toContain("pnpm run smoke:mcp-session");
     expect(profiles).toContain("pnpm run smoke:librarian-modes");
     expect(profiles).toContain("pnpm run smoke:singleton");
+    expect(profiles).toContain("pnpm run smoke:reranker-memory");
     expect(profiles).toContain("prepare_context");
     expect(profiles).toContain("commit_task");
     expect(profiles).toContain("correct_memory");

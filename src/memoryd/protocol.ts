@@ -38,7 +38,12 @@ export interface MemorydStatus {
   database_path: string;
   app_root: string;
   uptime_seconds: number;
-  jina_ready: boolean;
-  jina_worker_pid: number | null;
-  jina_model_path: string;
+  reranker_backend: string;
+  qwen_ready: boolean;
+  qwen_runtime_pid: number | null;
+  qwen_model_path: string;
+  llama_server_path: string;
+  reranker_endpoint: string | null;
+  reranker_idle_timeout_ms: number;
+  reranker_last_used_at: string | null;
 }
