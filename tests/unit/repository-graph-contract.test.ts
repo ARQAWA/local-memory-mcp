@@ -18,7 +18,7 @@ describe("repository graph contract", () => {
 
     expect(prompt).toContain("If this contract is present, Local Memory MCP is required");
     expect(prompt).toContain("Do not treat missing");
-    expect(prompt).toContain("Local Memory MCP is the agent's project memory backend");
+    expect(prompt).toContain("Local Memory MCP is the agent's proxy to project memory");
     expect(prompt).toContain("prepare_context(auto)");
     expect(prompt).toContain("prepare_context(light)");
     expect(prompt).toContain("Work from the returned `context_pack`");
@@ -67,12 +67,17 @@ describe("repository graph contract", () => {
     expect(readme).toContain("MCP stdio processes are proxy connectors only");
     expect(readme).toContain("memoryd");
     expect(readme).toContain("memoryd.sock");
+    expect(readme).toContain("many MCP sessions -> one `memoryd` -> one Jina worker");
     expect(readme).toContain("no per-MCP model load");
     expect(readme).toContain("pnpm run setup:reranker");
     expect(readme).toContain("pnpm run doctor");
     expect(readme).toContain("INSTALL_PROFILES.md");
     expect(readme).toContain("pnpm run smoke:librarian-modes");
     expect(readme).toContain("pnpm run smoke:singleton");
+    expect(readme).toContain("Backend-boundary command hooks are internal dev/debug support only");
+    expect(readme).toContain("not proof of a native client subagent");
+    expect(readme).not.toContain("LOCAL_MEMORY_LIBRARIAN_CMD");
+    expect(readme).not.toContain("LOCAL_MEMORY_LIBRARIAN_MODE");
     expect(readme).not.toContain("Use memory when " + "it helps the task");
     expect(readme).not.toContain("At the start of non-" + "trivial work");
     expect(readme).not.toContain("LOCAL_MEMORY_RERANKER=none");
@@ -120,7 +125,7 @@ describe("repository graph contract", () => {
     const projectMemoryTools = readProjectFile("src/tools/project-memory.ts");
     const toolsIndex = readProjectFile("src/tools/index.ts");
 
-    expect(server).toContain("Local Memory MCP is the agent core");
+    expect(server).toContain("Local Memory MCP is the agent's proxy");
     expect(server).toContain("proxy only");
     expect(server).toContain("singleton local memoryd backend");
     expect(server).toContain("prepare_context(auto)");
@@ -167,7 +172,7 @@ describe("repository graph contract", () => {
     expect(prompt).toContain("Client-specific short instructions");
     expect(prompt).toContain("Claude Code:");
     expect(prompt).toContain("claude mcp add local-memory --scope user");
-    expect(prompt).toContain("Claude Code subagents can inherit configured MCP tools");
+    expect(prompt).toContain("Allow it to inherit configured MCP tools");
     expect(prompt).toContain("Cursor:");
     expect(prompt).toContain("~/.cursor/mcp.json");
     expect(prompt).toContain(".cursor/mcp.json");
@@ -177,11 +182,15 @@ describe("repository graph contract", () => {
     expect(prompt).toContain("prepare_context(auto)` -> work -> `prepare_context(light)` -> `commit_task");
     expect(prompt).toContain("MCP stdio is a proxy connector only");
     expect(prompt).toContain("memoryd.sock");
+    expect(prompt).toContain("many MCP sessions -> one `memoryd` -> one Jina worker");
     expect(prompt).toContain("VACUUM INTO");
     expect(prompt).toContain("pnpm run smoke:singleton");
     expect(prompt).toContain("agent-initiated before the");
-    expect(prompt).toContain("LOCAL_MEMORY_LIBRARIAN_CMD=<test command>");
-    expect(prompt).toContain("JSON input and uses JSON output");
+    expect(prompt).toContain("Native librarian verification must use the client's native subagent trace");
+    expect(prompt).toContain("not objectively provable");
+    expect(prompt).toContain("Do not replace native client proof with backend command hook smoke");
+    expect(prompt).not.toContain("LOCAL_MEMORY_LIBRARIAN_CMD");
+    expect(prompt).not.toContain("LOCAL_MEMORY_LIBRARIAN_MODE");
     expect(prompt).toContain("pnpm run smoke:mcp-session");
     expect(prompt).toContain("pnpm run smoke:librarian-modes");
   });
@@ -195,11 +204,15 @@ describe("repository graph contract", () => {
     expect(profiles).toContain("required = true");
     expect(profiles).toContain("## Claude Code");
     expect(profiles).toContain("claude mcp add local-memory --scope user");
-    expect(profiles).toContain("inherits MCP tools by default");
-    expect(profiles).toContain("memoryd is the singleton backend");
+    expect(profiles).toContain("Allow it to inherit configured MCP tools");
+    expect(profiles).toContain("memoryd` is the singleton backend");
     expect(profiles).toContain("memoryd.sock");
     expect(profiles).toContain("memory-librarian");
     expect(profiles).toContain("prepare_context(auto) -> work -> prepare_context(light) -> commit_task");
+    expect(profiles).toContain("Codex main agent -> Codex native memory-librarian -> prepare_context(deep)");
+    expect(profiles).toContain("not native client subagent proof");
+    expect(profiles).not.toContain("LOCAL_MEMORY_LIBRARIAN_CMD");
+    expect(profiles).not.toContain("LOCAL_MEMORY_LIBRARIAN_MODE");
     expect(profiles).toContain("## Cursor");
     expect(profiles).toContain("~/.cursor/mcp.json");
     expect(profiles).toContain("cursor-agent mcp list-tools local-memory");

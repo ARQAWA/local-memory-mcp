@@ -1,7 +1,7 @@
 {
   "name": "local-memory-mcp",
   "version": "0.1.0",
-  "description": "Local-only MCP memory server with SQLite, vector search, and project memory cards",
+  "description": "Local MCP proxy with singleton memoryd, SQLite, vector search, and project memory cards",
   "type": "module",
   "main": "dist/index.js",
   "bin": {

@@ -1,6 +1,6 @@
 # Local Memory MCP
 
-Local-only MCP backend for lightweight project memory.
+Local-only MCP proxy for lightweight project memory.
 
 This README is for humans. Agent behavior is defined by
 `INSTALL_AGENT_PROMPT.md`, which installs the managed
@@ -18,11 +18,14 @@ This README is for humans. Agent behavior is defined by
   because identity is rooted in the canonical project path.
 - Cross-repository reads are explicit: use `repository_mode=specific` or
   `repository_mode=all`.
-- The runtime surface is MCP stdio plus one local `memoryd` backend.
+- The runtime surface is MCP stdio proxy plus one local `memoryd` backend.
 - MCP stdio processes are proxy connectors only.
 - `memoryd` is the only process that opens SQLite, retrieval runtime, and Jina.
 - Multiple clients and MCP sessions share the same `memoryd`.
+- Topology: many MCP sessions -> one `memoryd` -> one Jina worker.
 - There is no per-MCP model load.
+- Public MCP tools are only `prepare_context`, `commit_task`, and
+  `correct_memory`.
 
 There is no per-agent database, per-repository database, or alternate identity
 layer.
@@ -60,8 +63,8 @@ Project memory cards add these fields on `memories`:
 - `metadata_json`
 - `supersedes_id`
 
-Legacy `memory_type` remains for old tools and old SQLite data. New cards map
-legacy types to card types:
+Legacy `memory_type` remains for existing SQLite data. New cards map legacy
+types to card types:
 
 - `decision` -> `decision`
 - `procedure` -> `process`
@@ -124,22 +127,23 @@ Status modifiers:
 - `superseded`: `-0.60`
 - `wrong`: dropped
 
-Optional librarian:
+Native client librarian:
 
-- `LOCAL_MEMORY_LIBRARIAN_MODE=off|auto|always`
-- `LOCAL_MEMORY_LIBRARIAN_CMD`
-- `LOCAL_MEMORY_LIBRARIAN_TIMEOUT_MS=30000`
-
-If `LOCAL_MEMORY_LIBRARIAN_MODE=always` and the command fails,
-`prepare_context` fails clearly. In `auto` mode, librarian failure falls back
-to the local context pack. Reranking remains mandatory in every mode.
+- Codex main agent can delegate deep memory retrieval to a Codex native
+  `memory-librarian` subagent/profile when the host supports native subagents.
+- The native librarian uses the same public MCP tool surface and calls
+  `prepare_context(deep)`.
+- Backend-boundary command hooks are internal dev/debug support only. They are
+  not normal client UX and are not proof of a native client subagent.
+- Reranking remains mandatory in every mode.
 
 ## Agent Instructions
 
 The source of truth for agent behavior is `INSTALL_AGENT_PROMPT.md`.
 
 The installer writes the managed `LOCAL_MEMORY_MCP_AGENT_CONTRACT` into the
-host global rules. That contract treats Local Memory MCP as the agent core:
+host global rules. That contract treats Local Memory MCP as the agent's memory
+proxy:
 agents call `prepare_context(auto)` before non-trivial tasks, use
 `prepare_context(light)` for micro-details, work from the returned
 `context_pack`, commit durable task learnings with `commit_task`, avoid writing
@@ -161,7 +165,7 @@ The installer must:
 - install dependencies;
 - run `pnpm run setup:reranker`;
 - run typecheck, lint, and tests;
-- build the MCP backend;
+- build the MCP proxy and `memoryd` backend;
 - run migrations;
 - create a SQLite backup before pending migrations;
 - run `pnpm run doctor`;
@@ -182,8 +186,9 @@ pnpm run smoke:singleton
 ```
 
 The smoke starts a fresh stdio MCP session, verifies the public tool list, runs
-`prepare_context`, and proves a live librarian command receives JSON input and
-returns the context pack. The librarian mode smoke verifies:
+`prepare_context`, and checks the internal backend-boundary librarian command
+used by dev/debug tests. This command smoke is not native client subagent proof.
+The librarian mode smoke verifies:
 
 - `off`: command is not called;
 - `auto`: command failure falls back to the local pack;

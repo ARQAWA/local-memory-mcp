@@ -37,7 +37,7 @@ export class EntityExtractionService {
     repositoryId: string,
     existingTags: string[],
   ): Promise<{ entities: ExtractedEntity[]; relations: ExtractedRelation[] }> {
-    // Extract entities from tags (already extracted by the remember pipeline)
+    // Extract entities from tags that were already collected during storage.
     const fromTags = this.entitiesFromTags(existingTags);
 
     // Try LLM-based entity extraction via SamplingService, fall back to regex

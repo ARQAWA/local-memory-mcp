@@ -138,7 +138,7 @@ async function main() {
     );
     if (!always.isError) throw new Error("always mode failure did not fail prepare_context");
     const text = always.content?.[0]?.text ?? "";
-    if (!text.includes("Librarian subagent")) {
+    if (!text.includes("Librarian command")) {
       throw new Error(`always mode failed with wrong error: ${text}`);
     }
 

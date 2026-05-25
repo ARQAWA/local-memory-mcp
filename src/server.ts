@@ -8,7 +8,7 @@ export interface McpServerWithSampling {
   samplingService: SamplingService;
 }
 
-const SERVER_INSTRUCTIONS = `Local Memory MCP is the agent core, a local persistent memory system.
+const SERVER_INSTRUCTIONS = `Local Memory MCP is the agent's proxy to a local persistent memory system.
 
 This MCP stdio process is a proxy only. It connects to the singleton local memoryd backend. SQLite, retrieval runtime, and the Jina MLX worker live only inside memoryd, and multiple MCP sessions share that backend.
 

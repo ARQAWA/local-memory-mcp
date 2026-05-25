@@ -28,7 +28,7 @@ describe("RepositorySelectorSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  test("recall defaults to hard graph enrichment", () => {
+  test("legacy query schema defaults to hard graph enrichment", () => {
     const parsed = RecallSchema.parse({ query: "repo graph", limit: 5, token_budget: 1000 });
     expect(parsed.graph_mode).toBe("hard");
   });

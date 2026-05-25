@@ -172,7 +172,7 @@ export const RepositorySelectorSchema = z
 
 export const RememberSchema = z
   .object({
-    content: contentSchema.describe("The knowledge to remember (markdown)"),
+    content: contentSchema.describe("The knowledge to store (markdown)"),
     memory_type: MemoryTypeSchema.describe("Type: fact, decision, procedure, episode, reference, or convention"),
     card_type: CardTypeSchema.optional().describe("Project memory card type"),
     status: MemoryStatusSchema.optional().describe("Project memory card status"),
@@ -212,7 +212,7 @@ export const RememberSchema = z
 
 export const RememberFactSchema = z
   .object({
-    fact: contentSchema.describe("The atomic fact to remember"),
+    fact: contentSchema.describe("The atomic fact to store"),
     tags: tagsArraySchema.describe("Classification tags"),
     created_by: z.string().min(1).max(200).default("agent").describe("Who is recording this"),
   })
@@ -249,9 +249,9 @@ export const GetContextForSchema = RepositorySelectorSchema.extend({
 
 export const ForgetSchema = z
   .object({
-    id: z.uuid().describe("Memory UUID to forget"),
-    reason: reasonSchema.describe("Why this memory is being forgotten"),
-    actor: z.string().min(1).max(200).default("agent").describe("Who is forgetting this"),
+    id: z.uuid().describe("Memory UUID to remove"),
+    reason: reasonSchema.describe("Why this memory is being removed"),
+    actor: z.string().min(1).max(200).default("agent").describe("Who is removing this"),
   })
   .strict();
 

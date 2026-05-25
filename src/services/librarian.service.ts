@@ -35,7 +35,7 @@ function timeoutFromEnv(value: string | undefined): number {
 }
 
 function serviceError(message: string): ExternalServiceError {
-  return new ExternalServiceError("Librarian subagent", message);
+  return new ExternalServiceError("Librarian command", message);
 }
 
 function parseStringArray(value: unknown): string[] {
@@ -95,7 +95,7 @@ export class LibrarianRunner {
       return parsed;
     } catch (err: unknown) {
       if (mode === "always") throw err;
-      logger.warn("Librarian subagent failed; continuing without librarian pack", {
+      logger.warn("Librarian command failed; continuing without librarian pack", {
         error: err instanceof Error ? err.message : String(err),
       });
       return null;

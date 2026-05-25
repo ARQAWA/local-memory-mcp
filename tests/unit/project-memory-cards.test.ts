@@ -427,7 +427,7 @@ describe("project memory cards", () => {
         repository: repository.slug,
         use_librarian: "always",
       }),
-    ).rejects.toThrow("Librarian subagent");
+    ).rejects.toThrow("Librarian command");
   });
 
   test("librarian always uses live command output and receives JSON input", async () => {

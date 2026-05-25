@@ -6,10 +6,13 @@ Architecture:
 
 - MCP stdio is a proxy connector only.
 - `memoryd` is the singleton backend for one user and host.
-- memoryd is the singleton backend.
-- SQLite, retrieval, and Jina live only inside `memoryd`.
-- Multiple clients and MCP sessions share the same backend.
-- There is no per-MCP model load.
+- SQLite, retrieval, and Jina MLX live only inside `memoryd`.
+- Many clients and MCP sessions share one backend:
+  many MCP sessions -> one `memoryd` -> one Jina worker.
+- Public MCP tools are only `prepare_context`, `commit_task`, and
+  `correct_memory`.
+- Backend-boundary command hooks are internal dev/debug support only. They are
+  not normal subagent UX and are not native client subagent proof.
 
 Shared MCP command:
 
@@ -28,24 +31,29 @@ Required environment:
 
 - `OPENROUTER_API_KEY` for embeddings.
 - `LOCAL_MEMORY_DB_PATH` only when the default DB path must change.
-- `LOCAL_MEMORY_RERANKER_MODEL_PATH` only when the model is not in the
-  default path.
+- `LOCAL_MEMORY_RERANKER_MODEL_PATH` only when the model is not in the default
+  path.
 - `LOCAL_MEMORY_RERANKER_PYTHON` only when the Python venv is not in the
   default app path.
-- `LOCAL_MEMORY_LIBRARIAN_MODE`, `LOCAL_MEMORY_LIBRARIAN_CMD`, and
-  `LOCAL_MEMORY_LIBRARIAN_TIMEOUT_MS` only when a backend command librarian is
-  intentionally used.
 
 Do not put secrets in project files. Prefer user/global environment config.
 
-Expected fresh-session route:
+Expected main-agent route:
 
 ```text
 prepare_context(auto) -> work -> prepare_context(light) -> commit_task
 ```
 
+Expected native librarian route:
+
+```text
+Codex main agent -> Codex native memory-librarian -> prepare_context(deep)
+Codex main agent -> prepare_context(light)
+Codex main agent -> commit_task
+```
+
 Prompts and rules must add only the memory contract. They must not change the
-client's personality, tone, or ARQAWA rules.
+client's personality, tone, style, or ARQAWA rules.
 
 ## Codex
 
@@ -70,11 +78,15 @@ Env vars:
 
 Native memory-librarian:
 
-- Create a Codex native subagent named `memory-librarian` only if the host
-  supports native subagents.
-- Give it access to the same `local-memory` MCP tools.
-- Its instruction is only the memory contract and retrieval route.
-- It must not replace Codex personality, tone, or ARQAWA rules.
+- Create a Codex native subagent/profile named `memory-librarian` when this
+  Codex install supports native subagents.
+- Give it access to the same required `local-memory` MCP server.
+- Limit its instruction to memory retrieval using the managed memory contract.
+- For deep memory context, the main agent delegates to this native librarian,
+  and the librarian calls `prepare_context(deep)`.
+- The main agent still calls `prepare_context(light)` for narrow follow-up
+  facts and `commit_task` at task end.
+- Do not use backend command hooks as proof of Codex native subagent behavior.
 
 Verify fresh session:
 
@@ -89,8 +101,14 @@ Then start a new Codex session and verify:
 
 - visible tools: `prepare_context`, `commit_task`, `correct_memory`;
 - first non-trivial action calls `prepare_context(auto)`;
+- deep retrieval uses the native `memory-librarian` when Codex exposes an
+  objective trace for it;
 - narrow follow-up calls `prepare_context(light)`;
 - task closure calls `commit_task`.
+
+If Codex does not expose objective native-subagent trace, record:
+`not objectively provable`. Do not replace that proof with a backend command
+runner smoke.
 
 ## Claude Code
 
@@ -109,9 +127,11 @@ Native memory-librarian:
 
 - Create a Claude Code native subagent named `memory-librarian`.
 - Allow it to inherit configured MCP tools.
-- Claude Code native memory-librarian inherits MCP tools by default.
-- Its job is memory retrieval/commit workflow only.
-- Do not use it as proof unless a real fresh Claude Code session was tested.
+- Limit its job to memory retrieval and the managed memory contract.
+- Expected route:
+  `main agent -> memory-librarian -> prepare_context(deep)`.
+- Do not mark Claude Code native proof complete unless a real fresh Claude Code
+  session was tested on this host.
 
 Verify fresh session:
 
@@ -122,7 +142,7 @@ pnpm run smoke:librarian-modes
 pnpm run smoke:singleton
 ```
 
-Expected route:
+Expected main-agent route:
 
 - `prepare_context(auto)` before planning or implementation;
 - `prepare_context(light)` for narrow follow-up facts;
@@ -137,7 +157,7 @@ MCP command:
   "mcpServers": {
     "local-memory": {
       "type": "stdio",
-      "command": "/Users/arkadijcukavin/.local/bin/local-memory-mcp"
+      "command": "$HOME/.local/bin/local-memory-mcp"
     }
   }
 }
@@ -159,7 +179,9 @@ Native memory-librarian:
 - Create a Cursor native agent/rule setup named `memory-librarian` if the
   installed Cursor version supports it.
 - Connect it to the configured `local-memory` MCP server.
-- Keep its prompt limited to memory contract behavior.
+- Keep its prompt limited to memory retrieval and the managed memory contract.
+- Expected route:
+  `main agent -> memory-librarian -> prepare_context(deep)`.
 
 Verify fresh session:
 
@@ -171,7 +193,7 @@ pnpm run smoke:librarian-modes
 pnpm run smoke:singleton
 ```
 
-Expected route:
+Expected main-agent route:
 
 - `prepare_context(auto)` -> work -> `prepare_context(light)` -> `commit_task`.
 
@@ -184,7 +206,7 @@ VS Code MCP command:
   "servers": {
     "local-memory": {
       "type": "stdio",
-      "command": "/Users/arkadijcukavin/.local/bin/local-memory-mcp"
+      "command": "$HOME/.local/bin/local-memory-mcp"
     }
   }
 }
@@ -213,7 +235,10 @@ Native memory-librarian:
 - Use the native Copilot/VS Code agent mode if available.
 - Name the setup `memory-librarian`.
 - Give it access to `local-memory` MCP tools.
-- Keep instructions limited to memory context and commit behavior.
+- Keep instructions limited to memory retrieval and the managed memory
+  contract.
+- Expected route:
+  `main agent -> memory-librarian -> prepare_context(deep)`.
 
 Verify fresh session:
 
@@ -225,7 +250,7 @@ pnpm run smoke:librarian-modes
 pnpm run smoke:singleton
 ```
 
-Expected route:
+Expected main-agent route:
 
 - `prepare_context(auto)` before work;
 - `prepare_context(light)` for narrow follow-up facts;

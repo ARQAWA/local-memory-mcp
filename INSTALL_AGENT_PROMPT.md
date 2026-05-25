@@ -8,7 +8,7 @@ You are installing Local Memory MCP.
 Goal:
 - Install one shared Local Memory MCP on this machine.
 - Use one local SQLite database file.
-- Configure the current agent host to use this MCP globally.
+- Configure the current agent host to use this MCP proxy globally.
 - Install the Local Memory Agent Contract in the current host's global
   rules/instructions store.
 - Make the Local Memory MCP server required when the host supports required
@@ -31,7 +31,12 @@ Memory model:
 - `memoryd` is the singleton backend for this user and host.
 - Only `memoryd` opens SQLite, retrieval runtime, and Jina.
 - Multiple clients and MCP sessions share one `memoryd`.
+- Topology: many MCP sessions -> one `memoryd` -> one Jina worker.
 - There is no per-MCP Jina/model load.
+- Public MCP tools are only `prepare_context`, `commit_task`, and
+  `correct_memory`.
+- Backend-boundary command hooks are internal dev/debug support only. They are
+  not normal subagent UX and are not native client subagent proof.
 
 Backend state files:
 - `$HOME/.local/share/local-memory-mcp/memoryd.sock`
@@ -62,10 +67,7 @@ Rules:
 - Use `LOCAL_MEMORY_RERANKER_MODEL_PATH`,
   `LOCAL_MEMORY_RERANKER_PYTHON`, and
   `LOCAL_MEMORY_RERANKER_TIMEOUT_MS` only when defaults must change.
-- Use `LOCAL_MEMORY_LIBRARIAN_MODE=off|auto|always`,
-  `LOCAL_MEMORY_LIBRARIAN_CMD`, and
-  `LOCAL_MEMORY_LIBRARIAN_TIMEOUT_MS=30000` only when a local librarian
-  command is explicitly needed.
+- Do not configure backend command hooks as normal client subagents.
 - Do not print secret values.
 
 Steps:
@@ -73,20 +75,26 @@ Steps:
 2. Detect the active app path and active command path.
    - Default app path: `$HOME/.local/share/local-memory-mcp/app`.
    - Default command: `$HOME/.local/bin/local-memory-mcp`.
-3. Stop or ignore old web/admin/MCP leftovers.
-   - Do not restart old web/admin services.
-   - Remove stale web/admin files from the active app during sync.
+3. Remove stale files that are not present in the current repo during active
+   app sync.
+   - Do not restart removed legacy services.
    - Do not restore removed public tools.
 4. Back up the live SQLite DB before changing the active app.
    - Use `VACUUM INTO` to create a backup under
      `$HOME/.local/share/local-memory-mcp/backups`.
    - Do not continue if the backup fails.
-5. Install or update the repo at the install path.
-   - If this prompt is in an already checked-out repo, use that repo/ref as
-     the source.
+5. Download or update the repo, then sync repo -> active app.
+   - Repository URL: `https://github.com/ARQAWA/local-memory-mcp`.
+   - If this prompt is run inside an already checked-out repo, use that
+     checkout/ref as the source.
+   - If no source checkout exists, clone the repository.
+   - If a source checkout exists, fetch and update it to the requested branch
+     or ref. If no ref is requested, use the checkout's current branch.
    - Do not assume GitHub `main` contains local uncommitted work unless the
      user explicitly says to install from GitHub.
-   - Remove stale files from the install path before copying/building.
+   - Sync the source into `$HOME/.local/share/local-memory-mcp/app`.
+   - Delete stale active-app files during sync, while preserving live DB,
+     backups, and user/global secret config outside the app path.
 6. Install dependencies with `pnpm install --frozen-lockfile`.
 7. Run `pnpm run setup:reranker`.
 8. Run `pnpm exec tsc --noEmit --incremental false`.
@@ -105,29 +113,44 @@ Steps:
     - Replace only the managed `LOCAL_MEMORY_MCP_AGENT_CONTRACT` block.
     - Preserve unrelated rules and other managed blocks, including ARQAWA
       blocks.
-20. Configure or document native memory-librarian setup for the client profile.
+20. Configure native memory-librarian setup for the client profile when the
+    client supports native subagents.
 21. Start a fresh agent/MCP session and verify tool schemas and the expected
     route: `prepare_context(auto)` -> work -> `prepare_context(light)` ->
     `commit_task`.
 
 Client-specific short instructions:
 
-Use `INSTALL_PROFILES.md` as the concise client setup reference after the
-backend is installed.
+The sections below are self-contained. `INSTALL_PROFILES.md` is the concise
+reference after the proxy/backend install is complete.
 
 Codex:
 - Configure `~/.codex/config.toml` with `mcp_servers.local-memory`.
 - Use command `$HOME/.local/bin/local-memory-mcp`.
 - Set `required = true`.
 - Install the managed contract into `~/.codex/AGENTS.md`.
+- If this Codex install supports native subagents, create a native
+  `memory-librarian` subagent/profile.
+- Give the native librarian access to the same required `local-memory` MCP
+  server.
+- Limit the librarian instruction to memory retrieval using the managed memory
+  contract.
+- Expected native route:
+  `Codex main agent -> Codex native memory-librarian -> prepare_context(deep)`.
+- The main agent still uses `prepare_context(light)` for narrow follow-up facts
+  and `commit_task` at task end.
+- Do not use backend command hook smoke as proof of Codex native subagent
+  behavior.
 
 Claude Code:
 - Add the MCP server at user scope:
   `claude mcp add local-memory --scope user -- $HOME/.local/bin/local-memory-mcp`.
 - Install a separate Claude memory contract in the Claude Code user/global
   instruction target.
-- If a local librarian is needed, configure a Claude Code subagent separately.
-  Claude Code subagents can inherit configured MCP tools.
+- Configure a Claude Code native `memory-librarian` subagent when available.
+- Allow it to inherit configured MCP tools.
+- Expected native route:
+  `main agent -> memory-librarian -> prepare_context(deep)`.
 - Do not mark Claude Code verification complete unless it was tested on this
   host.
 
@@ -136,6 +159,10 @@ Cursor:
   project-local setup.
 - Add `local-memory` with command `$HOME/.local/bin/local-memory-mcp`.
 - Install the managed contract into Cursor User Rules or project rules.
+- Configure a native `memory-librarian` agent/rule setup when the installed
+  Cursor version supports it.
+- Expected native route:
+  `main agent -> memory-librarian -> prepare_context(deep)`.
 
 GitHub Copilot / VS Code:
 - For VS Code, configure the user or workspace `mcp.json`, or use
@@ -143,6 +170,10 @@ GitHub Copilot / VS Code:
 - For Copilot CLI, use `/mcp add` or edit `~/.copilot/mcp-config.json`.
 - Add only the `local-memory` stdio server command and the managed contract in
   the client instruction location.
+- Configure native Copilot/VS Code agent mode as `memory-librarian` when
+  available.
+- Expected native route:
+  `main agent -> memory-librarian -> prepare_context(deep)`.
 
 Install checks:
 - `dist` must be freshly built after `rm -rf dist`.
@@ -176,16 +207,15 @@ Install checks:
 - The light-mode check must be a narrow follow-up inside the same task.
 - The commit check must prove the agent uses `commit_task`, not removed raw
   memory tools.
-- Librarian verification must set
-  `LOCAL_MEMORY_LIBRARIAN_MODE=always` and
-  `LOCAL_MEMORY_LIBRARIAN_CMD=<test command>`, then prove
-  `prepare_context` invokes the command with JSON input and uses JSON output.
-- Librarian fallback verification must also test `auto` failure fallback and
-  `always` failure as a clear `prepare_context` error.
+- Native librarian verification must use the client's native subagent trace
+  when the client exposes one.
+- If the client cannot expose objective native-subagent trace, record
+  `not objectively provable`.
+- Do not replace native client proof with backend command hook smoke.
 - `pnpm run smoke:mcp-session` verifies a fresh stdio MCP session exposes only
-  the public tools and that a live librarian command is called.
+  the public tools and checks the internal dev/debug librarian command path.
 - `pnpm run smoke:librarian-modes` verifies `off`, `auto`, and `always`
-  librarian mode behavior.
+  internal librarian mode behavior.
 - `pnpm run smoke:singleton` verifies multiple MCP sessions share one
   `memoryd` and one Jina worker.
 
@@ -194,7 +224,7 @@ Managed contract:
 <!-- BEGIN LOCAL_MEMORY_MCP_AGENT_CONTRACT -->
 ## Local Memory MCP Agent Contract
 
-Local Memory MCP is the agent's project memory backend.
+Local Memory MCP is the agent's proxy to project memory.
 
 If this contract is present, Local Memory MCP is required. Do not treat missing
 or unavailable memory tools as permission to continue without memory.
@@ -203,8 +233,9 @@ Without Local Memory MCP, stop and report the blocker. Do not continue without
 memory and do not invent memory results. The only exception is work whose direct
 goal is to install, configure, or repair Local Memory MCP itself.
 
-One machine has one shared Local Memory MCP and one shared local SQLite
-database file. Do not create per-agent or per-repository databases.
+One machine has one shared Local Memory MCP proxy, one singleton `memoryd`
+backend, and one shared local SQLite database file. Do not create per-agent or
+per-repository databases.
 
 Memory is stored globally on the host, but every memory belongs to exactly one
 repository. Default reads and writes use the current project. The current
@@ -265,9 +296,8 @@ Repository read-only, inspection, analysis, or planning mode still allows
 `prepare_context` reads. It forbids project, product, external, or user-visible
 state changes unless the user explicitly asks for them.
 
-When the user says "remember", "запомни", "save this", or "зафиксируй", use
-`commit_task` if the memory is reusable project knowledge. Do not write secrets
-or unverified guesses.
+When the user asks to save reusable project knowledge, use `commit_task`.
+Do not write secrets or unverified guesses.
 
 Memory card status rules:
 
